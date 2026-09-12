@@ -1,0 +1,5 @@
+/build/
+/distribution/artifacts/
+*.sqlite3
+*.sqlite3-*
+__pycache__/
