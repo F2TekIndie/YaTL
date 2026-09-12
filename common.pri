@@ -1,0 +1,9 @@
+CONFIG += c++17 warn_on
+CONFIG -= app_bundle
+YATL_ROOT = $$PWD
+YATL_BUILD = $$shadowed($$PWD)
+INCLUDEPATH += $$YATL_ROOT/src/core
+DESTDIR = $$YATL_BUILD/bin
+OBJECTS_DIR = .obj
+MOC_DIR = .moc
+RCC_DIR = .rcc

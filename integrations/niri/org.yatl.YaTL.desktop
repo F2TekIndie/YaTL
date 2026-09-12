@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=YaTL
+Comment=Local projects and tasks
+Exec=yatl
+Icon=view-task
+Terminal=false
+Categories=Office;ProjectManagement;
+StartupWMClass=org.yatl.YaTL
