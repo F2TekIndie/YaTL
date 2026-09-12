@@ -1,6 +1,6 @@
 include(../../common.pri)
 TEMPLATE = app
-QT = core sql
+QT = core network sql
 TARGET = yatlctl
 SOURCES = main.cpp
 LIBS += -L$$YATL_BUILD/lib -lyatlcore

@@ -13,6 +13,9 @@ a separate directory under `distribution/artifacts/` containing:
 - `rootfs/usr/local/bin/yatl`
 - `rootfs/usr/local/bin/yatlctl`
 - `rootfs/usr/local/share/applications/org.yatl.YaTL.desktop`
+- `rootfs/usr/local/share/applications/org.yatl.YaTL.QuickCapture.desktop`
+- `rootfs/usr/local/share/yatl/dms/YaTL/` (DMS widget plugin)
+- `rootfs/usr/local/share/yatl/niri/` (opt-in niri fragment and instructions)
 - `yatl-linux-<architecture>.tar.gz` and its `.sha256` file
 
 `QMAKE`, `BUILD_DIR`, and `JOBS` work as in `scripts/verify.sh`. Generated artifacts

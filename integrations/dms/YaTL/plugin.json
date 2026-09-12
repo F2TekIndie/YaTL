@@ -1,0 +1,16 @@
+{
+  "$schema": "https://danklinux.com/schemas/plugin.json",
+  "id": "yatl",
+  "name": "YaTL",
+  "description": "Today summary and quick task actions for YaTL",
+  "version": "0.7.0",
+  "author": "YaTL",
+  "type": "widget",
+  "capabilities": ["dankbar-widget", "task-management"],
+  "component": "./YaTLWidget.qml",
+  "icon": "checklist",
+  "startupCheck": "./StartupCheck.qml",
+  "requires_dms": ">=1.6.0",
+  "dependencies": ["yatlctl"],
+  "permissions": ["process"]
+}

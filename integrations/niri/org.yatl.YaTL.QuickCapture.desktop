@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=YaTL Quick Capture
+Comment=Add a task to the YaTL Inbox
+Exec=yatl --quick-capture
+Icon=view-task
+Terminal=false
+NoDisplay=true
+Categories=Office;ProjectManagement;
+StartupWMClass=org.yatl.YaTL.QuickCapture

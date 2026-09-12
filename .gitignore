@@ -1,5 +1,6 @@
 /build/
 /distribution/artifacts/
+/ui-*.png
 *.sqlite3
 *.sqlite3-*
 __pycache__/

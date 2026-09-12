@@ -3,16 +3,18 @@
 A private, Linux-only project and todo manager built with C++17, Qt 6 Quick/QML,
 qmake, and SQLite. Fedora is the first supported target.
 
-The implementation covers **project → capture → edit → complete → reopen →
-restart**, alongside the original Inbox workflow. The app and `yatlctl` share
-validation, transactional writes, and the same local database. Planning and
-DMS integration are subsequent iterations; see [implementation status](docs/implementation.md).
+The implementation covers **capture → organize/order/tag → schedule → review Today/Upcoming
+→ search → complete → archive/restore → restart**, alongside project, list, and tag management.
+The app and `yatlctl` share validation, transactional writes, and the same local
+database. DMS and niri integrations use the same CLI and activation path.
+Recurrence, notifications, settings, and export follow in later iterations; see
+[implementation status](docs/implementation.md).
 
 ## Build and verify
 
 Required: a C++17 compiler, Make, Python 3 (standard library only), Qt 6 Core,
-SQL with the SQLite driver, Quick, Quick Controls 2, Qt Test, Qt Quick Test, qmake,
-and the system OpenGL development library.
+SQL with the SQLite driver, Network, Quick, Quick Controls 2, Qt Test, Qt Quick
+Test, qmake, niri (for fragment validation), and the system OpenGL development library.
 
 Use the supplied Qt SDK:
 
@@ -28,7 +30,7 @@ The same script is configured in `.github/workflows/verify.yml` for Fedora 44.
 For a Fedora system toolchain, install dependencies yourself:
 
 ```sh
-sudo dnf install gcc-c++ make python3 qt6-qtbase-devel qt6-qtdeclarative-devel libglvnd-devel
+sudo dnf install gcc-c++ make python3 qt6-qtbase-devel qt6-qtdeclarative-devel libglvnd-devel niri
 QMAKE=/usr/bin/qmake6 ./scripts/verify.sh
 ```
 
@@ -44,7 +46,19 @@ future test needs exceed their capabilities.
 ./build/bin/yatlctl list
 ./build/bin/yatlctl complete 1
 ./build/bin/yatlctl list --filter completed
+./build/bin/yatlctl add "Plan the release" --scheduled 2026-09-12 --due 2026-09-13 --priority 3
+./build/bin/yatlctl today
+./build/bin/yatlctl upcoming
+./build/bin/yatlctl tag-add "Work" --color "#59675c"
+./build/bin/yatlctl add "Tagged task" --tags 1
+./build/bin/yatlctl list --tag 1
+./build/bin/yatlctl search "release"
+./build/bin/yatlctl archive 1
+./build/bin/yatlctl restore 1
 ./build/bin/yatlctl summary
+./build/bin/yatlctl open today
+./build/bin/yatlctl focus
+./build/bin/yatlctl capture
 ```
 
 Use the actual ID returned by `add`. Successful CLI commands emit JSON to stdout.
@@ -67,8 +81,16 @@ available in the Completed view, including after restart.
 
 Choose Inbox or a project in the selector. **New project** creates and selects a
 project; capture adds tasks to that destination. **Edit** changes the title,
-notes, and destination. Invalid edits keep the dialog open; Cancel discards
-unsaved changes. **Reopen** returns completed work to the Open view.
+notes, destination, separate scheduled and due dates, priority, and multiple tags. Invalid edits
+keep the dialog open; Cancel discards unsaved changes. **Today** shows open work
+that is overdue, due today, or scheduled by today. **Upcoming** shows open work
+with either date from tomorrow through the next 28 days. Search finds open and
+completed tasks by title, note, project, list, or tag name. The tag selector filters
+the current project or Inbox; **New tag** and **Edit tag** manage the global tag list.
+**Reopen** returns completed
+work to the Open view. **Archive** removes a task from active and planning views;
+the project's Archived filter or Search can retrieve and restore it. Arrow controls
+beside project and list selectors set their persistent display order.
 
 The equivalent CLI workflow is:
 
@@ -81,16 +103,50 @@ The equivalent CLI workflow is:
 ./build/bin/yatlctl complete 1
 ./build/bin/yatlctl reopen 1
 ./build/bin/yatlctl edit 1 "Publish release notes" --project inbox --note "Review first"
+./build/bin/yatlctl project-edit 1 "Release 1.0" --color "#663399"
+./build/bin/yatlctl list-add 1 "Review"
+./build/bin/yatlctl add "Check package" --project 1 --list 1
+./build/bin/yatlctl move 2 up --list 1
+./build/bin/yatlctl project-archive 1
+./build/bin/yatlctl projects --archived
+./build/bin/yatlctl project-restore 1
+./build/bin/yatlctl project-move 1 up
+./build/bin/yatlctl edit 2 "Check package" --project 1 --list 1 --note "" --scheduled 2026-09-12 --due 2026-09-13 --priority 3
+./build/bin/yatlctl list-move 1 up
+./build/bin/yatlctl tag-add "Work" --color "#59675c"
+./build/bin/yatlctl tag-add "Urgent" --color "#aa2727"
+./build/bin/yatlctl tags
+./build/bin/yatlctl edit 2 "Check package" --project 1 --list 1 --note "" --tags 1,2
+./build/bin/yatlctl list --project 1 --tag 1
+./build/bin/yatlctl tag-edit 1 "Office" --color "#334455"
+./build/bin/yatlctl today
+./build/bin/yatlctl upcoming
+./build/bin/yatlctl search "package"
+./build/bin/yatlctl archive 2
+./build/bin/yatlctl list --project 1 --filter archived
+./build/bin/yatlctl restore 2
 ```
 
-Substitute the returned project and task IDs. `edit` replaces the title, note,
-and destination together, so `--project` and `--note` are required; pass
-`--note ""` to clear notes. `list` defaults to all projects for compatibility;
+Substitute the returned project, list, and task IDs. `edit` replaces the title,
+note, and destination together, so `--project` and `--note` are required; pass
+`--note ""` to clear notes. Planning and tag options on `edit` preserve their
+existing values when omitted; pass `--scheduled none`, `--due none`,
+`--priority 0`, or `--tags none` to clear them. Dates are strict local calendar
+dates in `YYYY-MM-DD` form, and a scheduled date cannot be later than its due
+date. Priorities range from 0 (none)
+through 3 (high). `list` defaults to all projects for compatibility;
 `--project inbox` restricts it to unassigned tasks. `summary` counts open tasks
 across all projects. Project names are trimmed, limited to 120 characters, and
 unique under SQLite's ASCII case-insensitive comparison. Notes allow up to
-100,000 UTF-16 code units. Migration to schema 3 preserves existing tasks and
-events, and leaves old tasks in Inbox.
+100,000 UTF-16 code units. Projects have a validated `#RRGGBB` color and may be
+archived; archived projects remain browseable and become read-only until restored.
+Archived tasks retain their completion state and history, remain searchable while
+their project is active, and become read-only until restored. Optional task lists
+belong to one project. Up/Down ordering persists for projects, task lists, and tasks
+within filtered project views. Tags are global, case-insensitively unique, limited
+to 60 characters, and use validated `#RRGGBB` colors. A task accepts at most 50
+distinct tags. Migration to schema 7 preserves existing projects, lists, tasks,
+events, planning values, and visible ordering; existing tasks begin with no tags.
 
 ## Desktop and installation
 
@@ -98,12 +154,20 @@ Run `./distribution/package.sh` to verify, stage, and archive the installation
 payload in `distribution/artifacts/`. See [packaging](distribution/README.md)
 for contents and runtime requirements.
 
-`QT_QPA_PLATFORM=wayland ./build/bin/yatl` explicitly selects Wayland. The stable
-desktop/application ID is `org.yatl.YaTL`. A desktop entry is provided in
-`integrations/niri/`; no compositor configuration is modified.
+`QT_QPA_PLATFORM=wayland ./build/bin/yatl` explicitly selects Wayland. The main
+and capture app IDs are `org.yatl.YaTL` and `org.yatl.YaTL.QuickCapture`.
+`yatlctl open VIEW` changes the active view in an existing process or launches
+one, `focus` raises it through niri, and `capture` reuses a compact Inbox window.
+
+The package contains an optional niri fragment with tiled/floating rules and
+three keybinds. See [niri integration](integrations/niri/README.md). It also
+contains the YaTL DankMaterialShell 1.6 widget and popout; see
+[DMS integration](integrations/dms/README.md). Neither integration rewrites the
+user's compositor or shell configuration.
 
 After building, `make -C build install INSTALL_ROOT=/tmp/yatl-package` stages
-the app, CLI, and desktop entry beneath `/tmp/yatl-package/usr/local/`.
+the app, CLI, desktop entries, DMS plugin, and niri fragment beneath
+`/tmp/yatl-package/usr/local/`.
 This is a staging layout, not yet a redistributable bundle: a build against a
 personal Qt SDK uses that SDK's runtime location. Build against Fedora's Qt
 packages for system packaging.

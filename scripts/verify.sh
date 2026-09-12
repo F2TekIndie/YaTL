@@ -20,6 +20,12 @@ cd "$build_dir"
 make -j"${JOBS:-4}"
 "$build_dir/bin/tst_core"
 python3 "$repo_dir/tests/cli/test_cli.py" "$build_dir/bin/yatlctl"
+python3 "$repo_dir/tests/desktop/test_desktop.py" "$build_dir/bin/yatl" "$build_dir/bin/yatlctl" "$repo_dir"
+qt_host_bins="$("$qt_qmake" -query QT_HOST_BINS)"
+for qml_file in "$repo_dir"/integrations/dms/YaTL/*.qml; do
+    "$qt_host_bins/qmlformat" "$qml_file" >/dev/null
+done
+niri validate --config "$repo_dir/integrations/niri/yatl.kdl"
 QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic QT_QUICK_CONTROLS_STYLE=Fusion \
     QT_QUICK_BACKEND=software QSG_RHI_BACKEND=software \
     "$build_dir/bin/tst_ui" -input "$repo_dir/tests/ui"

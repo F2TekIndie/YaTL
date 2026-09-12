@@ -1,0 +1,16 @@
+// Optional YaTL integration for niri 26.x.
+window-rule {
+    match app-id=r#"^org\.yatl\.YaTL$"#
+    open-floating false
+}
+
+window-rule {
+    match app-id=r#"^org\.yatl\.YaTL\.QuickCapture$"#
+    open-floating true
+}
+
+binds {
+    Mod+Y { spawn "yatlctl" "focus"; }
+    Mod+Shift+Y { spawn "yatlctl" "open" "today"; }
+    Mod+Ctrl+Y { spawn "yatlctl" "capture"; }
+}

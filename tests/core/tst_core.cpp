@@ -1,5 +1,6 @@
 #include "taskmodel.h"
 #include <QSqlQuery>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -17,6 +18,48 @@ private:
         sql(path, "INSERT INTO tasks VALUES (8,'Old task','2026-09-01','2026-09-02')");
         sql(path, "INSERT INTO task_events VALUES (10,8,'created','2026-09-01'), (11,8,'completed','2026-09-02')");
         sql(path, "PRAGMA user_version=2");
+    }
+    static void seedV3(const QString &path) {
+        sql(path, "CREATE TABLE projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE UNIQUE)");
+        sql(path, "CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT, project_id INTEGER REFERENCES projects(id), note TEXT NOT NULL DEFAULT '')");
+        sql(path, "CREATE TABLE task_events (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id), type TEXT NOT NULL, timestamp TEXT NOT NULL, previous_value TEXT, new_value TEXT)");
+        sql(path, "CREATE INDEX tasks_completion ON tasks(completed_at,id)");
+        sql(path, "CREATE INDEX tasks_project ON tasks(project_id,completed_at,id)");
+        sql(path, "CREATE INDEX events_task ON task_events(task_id,id)");
+        sql(path, "INSERT INTO projects VALUES (4,'Existing project')");
+        sql(path, "INSERT INTO tasks VALUES (7,'Older','2026-09-01',NULL,4,''),(9,'Newer','2026-09-02',NULL,4,'Keep note')");
+        sql(path, "INSERT INTO task_events VALUES (12,7,'created','2026-09-01',NULL,NULL),(13,9,'created','2026-09-02',NULL,NULL)");
+        sql(path, "PRAGMA user_version=3");
+    }
+    static void seedV4(const QString &path) {
+        seedV3(path);
+        sql(path, "ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '#376548'");
+        sql(path, "ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+        sql(path, "CREATE TABLE task_lists (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id), name TEXT NOT NULL COLLATE NOCASE, UNIQUE(project_id,name))");
+        sql(path, "ALTER TABLE tasks ADD COLUMN list_id INTEGER REFERENCES task_lists(id)");
+        sql(path, "ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+        sql(path, "UPDATE tasks SET sort_order=-id");
+        sql(path, "CREATE INDEX tasks_order ON tasks(project_id,completed_at,sort_order,id)");
+        sql(path, "PRAGMA user_version=4");
+    }
+    static void seedV5(const QString &path) {
+        seedV4(path);
+        sql(path, "ALTER TABLE tasks ADD COLUMN scheduled_date TEXT");
+        sql(path, "ALTER TABLE tasks ADD COLUMN due_date TEXT");
+        sql(path, "ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
+        sql(path, "UPDATE tasks SET scheduled_date='2026-09-12',due_date='2026-09-13',priority=3 WHERE id=9");
+        sql(path, "INSERT INTO projects(id,name,color,archived) VALUES (6,'Zulu project','#112233',0)");
+        sql(path, "INSERT INTO task_lists(id,project_id,name) VALUES (6,4,'First list'),(8,4,'Second list')");
+        sql(path, "PRAGMA user_version=5");
+    }
+    static void seedV6(const QString &path) {
+        seedV5(path);
+        sql(path, "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+        sql(path, "UPDATE projects SET sort_order=CASE id WHEN 4 THEN 0 ELSE 1 END");
+        sql(path, "ALTER TABLE task_lists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+        sql(path, "UPDATE task_lists SET sort_order=CASE id WHEN 6 THEN 0 ELSE 1 END");
+        sql(path, "ALTER TABLE tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+        sql(path, "PRAGMA user_version=6");
     }
     static QVariant sql(const QString &path, const QString &statement) {
         const QString name = QUuid::createUuid().toString();
@@ -124,7 +167,10 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Must roll back"));
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.complete(id));
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.edit(id, "Must not change", "Note", {}));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.archiveTask(id, true));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.archiveTask(id, true));
         QCOMPARE(store.tasks().size(), 1);
+        QVERIFY(!store.task(id).archived);
         QCOMPARE(store.tasks().first().id, id);
         QCOMPARE(store.tasks().first().title, "Keep open");
         QCOMPARE(sql(path, "SELECT count(*) FROM task_events").toInt(), 1);
@@ -232,6 +278,379 @@ private slots:
         model.setProjectId("missing");
         QCOMPARE(model.projectId(), projectId);
         QVERIFY(!model.error().isEmpty());
+    }
+    void projectSettingsListsOrderingArchiveRestart() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("managed.sqlite3");
+        QString projectId, listId, firstId, secondId;
+        {
+            TaskStore store(path);
+            projectId = store.addProject("Release").id;
+            QCOMPARE(store.projects().first().color, "#376548");
+            QVERIFY(store.editProject(projectId, "Release 1.0", "#A1B2C3"));
+            QVERIFY(!store.editProject(projectId, "Release 1.0", "#a1b2c3"));
+            QCOMPARE(store.projects().first().color, "#a1b2c3");
+            listId = store.addList(projectId, "Review").id;
+            QVERIFY(store.renameList(listId, "Ready"));
+            firstId = store.add("First", projectId, listId).id;
+            secondId = store.add("Second", projectId, listId).id;
+            QCOMPARE(store.tasks("open", projectId, listId).first().id, secondId);
+            QVERIFY(store.moveTask(secondId, "down", listId));
+            auto ordered = store.tasks("open", projectId, listId);
+            QCOMPARE(ordered.at(0).id, firstId);
+            QCOMPARE(ordered.at(1).id, secondId);
+            QVERIFY(!store.moveTask(firstId, "up", listId));
+            QVERIFY(store.archiveProject(projectId, true));
+            QVERIFY(!store.archiveProject(projectId, true));
+            QVERIFY(store.projects().isEmpty());
+            QCOMPARE(store.projects(true).first().archived, true);
+            QVERIFY(store.tasks().isEmpty());
+            QCOMPARE(store.tasks("open", projectId, listId).size(), 2);
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Blocked", projectId));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.edit(firstId, "Blocked", "", projectId, listId));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.complete(firstId));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveTask(firstId, "down", listId));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.editProject(projectId, "Blocked", "#000000"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.addList(projectId, "Blocked"));
+            QVERIFY(store.archiveProject(projectId, false));
+        }
+        {
+            TaskStore store(path);
+            QCOMPARE(store.projects().first().name, "Release 1.0");
+            QCOMPARE(store.lists(projectId).first().name, "Ready");
+            const auto ordered = store.tasks("open", projectId, listId);
+            QCOMPARE(ordered.at(0).id, firstId);
+            QCOMPARE(ordered.at(1).id, secondId);
+        }
+    }
+    void listAndProjectManagementValidation() {
+        TaskStore store(":memory:");
+        const auto alpha = store.addProject("Alpha");
+        const auto beta = store.addProject("Beta");
+        const auto alphaList = store.addList(alpha.id, "Queue");
+        const auto betaList = store.addList(beta.id, "Queue");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.editProject(alpha.id, "Beta", "#112233"));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.editProject(alpha.id, "Alpha", "red"));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.addList({}, "No project"));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.addList(alpha.id, "queue"));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.renameList(alphaList.id, " "));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Wrong list", alpha.id, betaList.id));
+        const auto task = store.add("Correct", alpha.id, alphaList.id);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.edit(task.id, "Wrong", "", beta.id, alphaList.id));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveTask(task.id, "sideways", alphaList.id));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveTask(task.id, "up", betaList.id));
+        QCOMPARE(store.tasks("open", alpha.id, {}).size(), 0);
+        QCOMPARE(store.tasks("open", alpha.id, "*").size(), 1);
+    }
+    void upgradesV3WithStableOrderAndRollback() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v3.sqlite3");
+        seedV3(path);
+        {
+            TaskStore store(path);
+            QCOMPARE(store.projects().first().color, "#376548");
+            QCOMPARE(store.tasks("open", "4").at(0).id, "9");
+            QCOMPARE(store.tasks("open", "4").at(1).id, "7");
+            QCOMPARE(store.tasks("open", "4").at(0).note, "Keep note");
+            QCOMPARE(store.addList("4", "Backlog").id, "1");
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT id FROM task_events ORDER BY id DESC LIMIT 1").toInt(), 13);
+
+        const auto broken = dir.filePath("broken-v3.sqlite3");
+        seedV3(broken);
+        sql(broken, "CREATE INDEX tasks_order ON tasks(id)");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 3);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='list_id'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM sqlite_master WHERE name='task_lists'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM task_events").toInt(), 2);
+    }
+    void planningTodayUpcomingSearchAndRestart() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("planning.sqlite3");
+        const auto today = QDate::currentDate();
+        QString highId;
+        {
+            TaskStore store(path);
+            const auto project = store.addProject("Release Search");
+            const auto list = store.addList(project.id, "Review Queue");
+            store.add("Undated", project.id, list.id);
+            store.add("Overdue", project.id, list.id, {}, today.addDays(-1).toString(Qt::ISODate), 1);
+            store.add("Scheduled today", project.id, list.id, today.toString(Qt::ISODate), {}, 2);
+            highId = store.add("High tomorrow", project.id, list.id, {}, today.addDays(1).toString(Qt::ISODate), 3).id;
+            store.add("Low tomorrow", project.id, {}, today.addDays(1).toString(Qt::ISODate), {}, 1);
+            store.add("Beyond horizon", project.id, {}, {}, today.addDays(29).toString(Qt::ISODate), 3);
+            store.add("100% literal_name", {}, {}, {}, {}, 0);
+            const auto noteTask = store.add("Opaque", project.id, list.id);
+            QVERIFY(store.edit(noteTask.id, noteTask.title, "Needle in notes", project.id, list.id,
+                               today.toString(Qt::ISODate), today.addDays(2).toString(Qt::ISODate), 2));
+
+            const auto todayTasks = store.tasks("open", "*", "*", "today");
+            QCOMPARE(todayTasks.size(), 3);
+            QCOMPARE(todayTasks.at(0).title, "Scheduled today");
+            QCOMPARE(todayTasks.at(1).title, "Opaque");
+            QCOMPARE(todayTasks.at(2).title, "Overdue");
+            const auto upcoming = store.tasks("open", "*", "*", "upcoming");
+            QCOMPARE(upcoming.size(), 3);
+            QCOMPARE(upcoming.first().id, highId);
+            QCOMPARE(store.tasks("all", "*", "*", "search", "needle").first().id, noteTask.id);
+            QCOMPARE(store.tasks("all", "*", "*", "search", "release search").size(), 7);
+            QCOMPARE(store.tasks("all", "*", "*", "search", "review queue").size(), 5);
+            QCOMPARE(store.tasks("all", "*", "*", "search", "%").size(), 1);
+            QCOMPARE(store.tasks("all", "*", "*", "search", "_").size(), 1);
+            QVERIFY(store.tasks("all", "*", "*", "search", "   ").isEmpty());
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.tasks("open", "*", "*", "invalid"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Bad", {}, {}, "2026-2-01"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Bad", {}, {}, "not-a-date"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Bad", {}, {}, "2026-09-12", "2026-09-11"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Bad", {}, {}, {}, {}, 4));
+            QVERIFY(store.complete(highId));
+            QCOMPARE(store.tasks("open", "*", "*", "upcoming").size(), 2);
+        }
+        {
+            TaskStore store(path);
+            const auto task = store.task(highId);
+            QCOMPARE(task.dueDate, today.addDays(1).toString(Qt::ISODate));
+            QCOMPARE(task.priority, 3);
+            QCOMPARE(task.projectName, "Release Search");
+            QCOMPARE(task.listName, "Review Queue");
+            QVERIFY(task.completed());
+            QVERIFY(store.tasks("all", "*", "*", "search", "high tomorrow").first().completed());
+        }
+    }
+    void planningViewsExcludeArchivedProjects() {
+        TaskStore store(":memory:");
+        const auto project = store.addProject("Hidden plan");
+        store.add("Archived today", project.id, {}, QDate::currentDate().toString(Qt::ISODate), {}, 3);
+        QCOMPARE(store.tasks("open", "*", "*", "today").size(), 1);
+        QCOMPARE(store.tasks("all", "*", "*", "search", "archived").size(), 1);
+        QVERIFY(store.archiveProject(project.id, true));
+        QVERIFY(store.tasks("open", "*", "*", "today").isEmpty());
+        QVERIFY(store.tasks("all", "*", "*", "search", "archived").isEmpty());
+    }
+    void upgradesV4PlanningFieldsAndRollsBack() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v4.sqlite3");
+        seedV4(path);
+        {
+            TaskStore store(path);
+            const auto existing = store.task("9");
+            QVERIFY(existing.scheduledDate.isEmpty());
+            QVERIFY(existing.dueDate.isEmpty());
+            QCOMPARE(existing.priority, 0);
+            QCOMPARE(existing.note, "Keep note");
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT id FROM task_events ORDER BY id DESC LIMIT 1").toInt(), 13);
+
+        const auto broken = dir.filePath("broken-v4.sqlite3");
+        seedV4(broken);
+        sql(broken, "CREATE INDEX tasks_due ON tasks(id)");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 4);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='scheduled_date'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM task_events").toInt(), 2);
+    }
+    void taskArchiveRestoreSearchAndRestart() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("archive.sqlite3");
+        QString completedId;
+        QString todayId;
+        {
+            TaskStore store(path);
+            const auto project = store.addProject("Archive project");
+            const auto list = store.addList(project.id, "Archive list");
+            completedId = store.add("Completed archive target", project.id, list.id).id;
+            todayId = store.add("Today archive target", project.id, list.id,
+                                QDate::currentDate().toString(Qt::ISODate)).id;
+            QVERIFY(store.complete(completedId));
+            QVERIFY(store.archiveTask(completedId, true));
+            QVERIFY(!store.archiveTask(completedId, true));
+            QVERIFY(store.tasks("completed", project.id).isEmpty());
+            const auto archived = store.tasks("archived", project.id);
+            QCOMPARE(archived.size(), 1);
+            QCOMPARE(archived.first().id, completedId);
+            QVERIFY(archived.first().archived);
+            QVERIFY(archived.first().completed());
+            const auto searched = store.tasks("all", "*", "*", "search", "completed archive");
+            QCOMPARE(searched.size(), 1);
+            QVERIFY(searched.first().archived);
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.complete(completedId));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.reopen(completedId));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+                                     store.edit(completedId, "Blocked", "", project.id, list.id));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveTask(completedId, "up", list.id));
+            QVERIFY(store.archiveTask(todayId, true));
+            QVERIFY(store.tasks("open", "*", "*", "today").isEmpty());
+        }
+        {
+            TaskStore store(path);
+            QVERIFY(store.task(completedId).archived);
+            QVERIFY(store.archiveTask(completedId, false));
+            QVERIFY(!store.archiveTask(completedId, false));
+            QCOMPARE(store.tasks("completed").first().id, completedId);
+            QVERIFY(store.archiveTask(todayId, false));
+            QCOMPARE(store.tasks("open", "*", "*", "today").first().id, todayId);
+        }
+        QCOMPARE(sql(path, "SELECT group_concat(type,',') FROM (SELECT type FROM task_events WHERE task_id="
+                           + completedId + " ORDER BY id)").toString(),
+                 "created,completed,archived,restored");
+    }
+    void projectAndListOrderingPersists() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("organization-order.sqlite3");
+        QString firstProject;
+        QString secondProject;
+        QString movedProject;
+        QString firstList;
+        QString secondList;
+        QString movedList;
+        {
+            TaskStore store(path);
+            firstProject = store.addProject("First created").id;
+            secondProject = store.addProject("Second created").id;
+            movedProject = store.addProject("Third created").id;
+            QCOMPARE(store.projects().first().id, firstProject);
+            QVERIFY(store.moveProject(movedProject, "up"));
+            QVERIFY(store.moveProject(movedProject, "up"));
+            QVERIFY(!store.moveProject(movedProject, "up"));
+            QCOMPARE(store.projects().first().id, movedProject);
+
+            firstList = store.addList(movedProject, "First list").id;
+            secondList = store.addList(movedProject, "Second list").id;
+            movedList = store.addList(movedProject, "Third list").id;
+            QVERIFY(store.moveList(movedList, "up"));
+            QVERIFY(store.moveList(movedList, "up"));
+            QVERIFY(!store.moveList(movedList, "up"));
+            QCOMPARE(store.lists(movedProject).first().id, movedList);
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveProject(movedProject, "sideways"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveList(movedList, "sideways"));
+            QVERIFY(store.archiveProject(movedProject, true));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveProject(movedProject, "down"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.moveList(movedList, "down"));
+            QVERIFY(store.archiveProject(movedProject, false));
+        }
+        {
+            TaskStore store(path);
+            QCOMPARE(store.projects().first().id, movedProject);
+            QCOMPARE(store.projects().at(1).id, firstProject);
+            QCOMPARE(store.projects().last().id, secondProject);
+            QCOMPARE(store.lists(movedProject).first().id, movedList);
+            QCOMPARE(store.lists(movedProject).at(1).id, firstList);
+            QCOMPARE(store.lists(movedProject).last().id, secondList);
+        }
+    }
+    void upgradesV5ArchiveAndOrganizationOrderAndRollsBack() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v5.sqlite3");
+        seedV5(path);
+        {
+            TaskStore store(path);
+            const auto task = store.task("9");
+            QVERIFY(!task.archived);
+            QCOMPARE(task.priority, 3);
+            QCOMPARE(store.projects(true).at(0).name, "Existing project");
+            QCOMPARE(store.projects(true).at(1).name, "Zulu project");
+            QCOMPARE(store.lists("4").at(0).id, "6");
+            QCOMPARE(store.lists("4").at(1).id, "8");
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT id FROM task_events ORDER BY id DESC LIMIT 1").toInt(), 13);
+        QCOMPARE(sql(path, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='archived'").toInt(), 1);
+
+        const auto broken = dir.filePath("broken-v5.sqlite3");
+        seedV5(broken);
+        sql(broken, "CREATE INDEX projects_order ON projects(id)");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 5);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('projects') WHERE name='sort_order'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='archived'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM task_events").toInt(), 2);
+    }
+    void tagAssignmentFilterSearchEditAndRestart() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("tags.sqlite3");
+        QString taskId;
+        QString workId;
+        QString homeId;
+        {
+            TaskStore store(path);
+            const auto work = store.addTag("  Work  ", "#A1B2C3");
+            const auto home = store.addTag("Home", "#445566");
+            workId = work.id;
+            homeId = home.id;
+            QCOMPARE(work.name, "Work");
+            QCOMPARE(work.color, "#a1b2c3");
+            QCOMPARE(store.tags().size(), 2);
+            QCOMPARE(store.tags().first().name, "Home");
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.addTag("work", "#010203"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.addTag("Bad", "red"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.addTag(QString(61, 'x'), "#010203"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.editTag(homeId, "WORK", "#010203"));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Unknown", {}, {}, {}, {}, 0, {"999"}));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Repeated", {}, {}, {}, {}, 0, {workId, workId}));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+                                     store.add("Too many", {}, {}, {}, {}, 0,
+                                               QStringList(51, workId)));
+
+            const auto task = store.add("Tagged task", {}, {}, {}, {}, 0, {workId, homeId});
+            taskId = task.id;
+            QCOMPARE(task.tags.size(), 2);
+            QCOMPARE(task.tags.first().name, "Home");
+            QCOMPARE(store.tasks("open", {}, "*", "project", {}, workId).first().id, taskId);
+            QCOMPARE(store.tasks("open", {}, "*", "project", {}, homeId).first().id, taskId);
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.tasks("open", {}, "*", "project", {}, "999"));
+            QCOMPARE(store.tasks("all", "*", "*", "search", "work").first().id, taskId);
+
+            QVERIFY(store.edit(taskId, "Tagged task", "Keep tags in history", {}, {}, {}, {}, 0, {homeId}));
+            QCOMPARE(store.task(taskId).tags.size(), 1);
+            QCOMPARE(store.task(taskId).tags.first().id, homeId);
+            QVERIFY(store.tasks("open", {}, "*", "project", {}, workId).isEmpty());
+            QVERIFY(store.editTag(homeId, "Personal", "#778899"));
+            QCOMPARE(store.task(taskId).tags.first().name, "Personal");
+            QCOMPARE(store.task(taskId).tags.first().color, "#778899");
+            QCOMPARE(store.tasks("all", "*", "*", "search", "personal").first().id, taskId);
+            QVERIFY(store.tasks("all", "*", "*", "search", "home").isEmpty());
+            QVERIFY(!store.editTag(homeId, "Personal", "#778899"));
+
+            const auto eventJson = QJsonDocument::fromJson(sql(path,
+                "SELECT new_value FROM task_events WHERE type='edited' ORDER BY id DESC LIMIT 1").toByteArray()).object();
+            QCOMPARE(eventJson.value("tag_ids").toArray().size(), 1);
+            QCOMPARE(eventJson.value("tag_ids").toArray().first().toString(), homeId);
+        }
+        {
+            TaskStore store(path);
+            QCOMPARE(store.task(taskId).tags.first().name, "Personal");
+            QCOMPARE(store.tasks("open", {}, "*", "project", {}, homeId).first().id, taskId);
+            QVERIFY(store.edit(taskId, "Tagged task", "Keep tags in history", {}, {}, {}, {}, 0, {}));
+            QVERIFY(store.task(taskId).tags.isEmpty());
+        }
+    }
+    void upgradesV6TagsAndRollsBack() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v6.sqlite3");
+        seedV6(path);
+        {
+            TaskStore store(path);
+            QVERIFY(store.task("9").tags.isEmpty());
+            const auto tag = store.addTag("Migrated", "#123456");
+            QVERIFY(store.edit("9", "Newer", "Keep note", "4", {}, "2026-09-12", "2026-09-13", 3, {tag.id}));
+            QCOMPARE(store.task("9").tags.first().name, "Migrated");
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT count(*) FROM tags").toInt(), 1);
+        QCOMPARE(sql(path, "SELECT count(*) FROM task_tags").toInt(), 1);
+        QCOMPARE(sql(path, "SELECT id FROM task_events ORDER BY id LIMIT 1").toInt(), 12);
+
+        const auto broken = dir.filePath("broken-v6.sqlite3");
+        seedV6(broken);
+        sql(broken, "CREATE TABLE task_tags(marker INTEGER)");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 6);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tags'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('task_tags') WHERE name='marker'").toInt(), 1);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM tasks").toInt(), 2);
     }
 };
 QTEST_GUILESS_MAIN(CoreTest)
