@@ -9,10 +9,10 @@ Button { id: control
     Accessible.name: text
     contentItem: Text {
         text: control.text
-        color: !control.enabled ? AppTheme.onSurfaceVariant
-             : control.variant === "text" ? AppTheme.onSurface
-             : control.variant === "destructive" ? AppTheme.onErrorContainer
-             : control.variant === "tonal" ? AppTheme.onPrimaryContainer : AppTheme.onPrimary
+        color: !control.enabled ? AppTheme.mutedForeground
+             : control.variant === "text" ? AppTheme.foreground
+             : control.variant === "destructive" ? AppTheme.errorContainerForeground
+             : control.variant === "tonal" ? AppTheme.primaryContainerForeground : AppTheme.primaryForeground
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight

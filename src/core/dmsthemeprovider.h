@@ -14,6 +14,12 @@ class DmsThemeProvider : public QObject {
     THEME_PROPERTY(outline) THEME_PROPERTY(outlineVariant) THEME_PROPERTY(error)
     THEME_PROPERTY(errorContainer) THEME_PROPERTY(onErrorContainer) THEME_PROPERTY(scrim)
     Q_PROPERTY(bool reducedMotion READ reducedMotion CONSTANT)
+    Q_PROPERTY(int revision READ revision NOTIFY themeChanged)
+    Q_PROPERTY(QString textColor READ textColor NOTIFY themeChanged)
+    Q_PROPERTY(QString mutedTextColor READ mutedTextColor NOTIFY themeChanged)
+    Q_PROPERTY(QString primaryForeground READ primaryForeground NOTIFY themeChanged)
+    Q_PROPERTY(QString primaryContainerForeground READ primaryContainerForeground NOTIFY themeChanged)
+    Q_PROPERTY(QString errorContainerForeground READ errorContainerForeground NOTIFY themeChanged)
 #undef THEME_PROPERTY
 public:
     explicit DmsThemeProvider(QObject *parent = nullptr);
@@ -35,6 +41,12 @@ public:
     QString onErrorContainer() const { return colors_.value("onErrorContainer"); }
     QString scrim() const { return colors_.value("scrim"); }
     bool reducedMotion() const { return reducedMotion_; }
+    int revision() const { return revision_; }
+    QString textColor() const { return colors_.value("onSurface"); }
+    QString mutedTextColor() const { return colors_.value("onSurfaceVariant"); }
+    QString primaryForeground() const { return onPrimary(); }
+    QString primaryContainerForeground() const { return onPrimaryContainer(); }
+    QString errorContainerForeground() const { return onErrorContainer(); }
     Q_INVOKABLE QString color(const QString &role) const { return colors_.value(role); }
 signals:
     void themeChanged();
@@ -46,4 +58,5 @@ private:
     QMap<QString, QString> colors_;
     QString filePath_;
     bool reducedMotion_ = false;
+    int revision_ = 0;
 };

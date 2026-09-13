@@ -13,19 +13,22 @@ ApplicationWindow {
     title: "YaTL — " + viewTitle()
     color: App.AppTheme.background
     palette.window: App.AppTheme.background
-    palette.windowText: App.AppTheme.onSurface
-    palette.text: App.AppTheme.onSurface
+    palette.windowText: App.AppTheme.foreground
+    palette.text: App.AppTheme.foreground
     palette.base: App.AppTheme.surface
     palette.button: App.AppTheme.surfaceContainerHigh
-    palette.buttonText: App.AppTheme.onSurface
+    palette.buttonText: App.AppTheme.foreground
     palette.highlight: App.AppTheme.primary
-    palette.highlightedText: App.AppTheme.onPrimary
+    palette.highlightedText: App.AppTheme.primaryForeground
 
     function capture() {
         if (taskModel.add(titleInput.text)) {
             titleInput.clear();
             titleInput.forceActiveFocus();
         }
+    }
+    function openTaskEditor(id, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence) {
+        editor.editTask(id, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence);
     }
     function projectIndex(id) {
         for (let i = 0; i < taskModel.projects.length; ++i)
@@ -56,7 +59,8 @@ ApplicationWindow {
     function listOrderIndex(id) {
         const choices = taskModel.listsFor(taskModel.projectId);
         for (let i = 1; i < choices.length; ++i)
-            if (choices[i].id === id) return i - 1;
+            if (choices[i].id === id)
+                return i - 1;
         return -1;
     }
     function viewTitle() {
@@ -66,7 +70,7 @@ ApplicationWindow {
             return "Upcoming";
         if (taskModel.view === "search")
             return "Search";
-        return taskModel.projectId === "" ? "Inbox" : (taskModel.projectInfo.name || destination.currentText);
+        return taskModel.projectId === "" ? "Inbox" : (taskModel.projectInfo.name || "Project");
     }
     function priorityName(value) {
         return ["No priority", "Low", "Medium", "High"][value];
@@ -80,19 +84,22 @@ ApplicationWindow {
     function selectedDefaultProjectId() {
         const name = defaultProject.currentText;
         for (let item of taskModel.projects)
-            if (item.displayName === name) return item.id;
+            if (item.displayName === name)
+                return item.id;
         return "";
     }
     function contrastText(hex) {
-        if (!hex || hex.length < 7) return App.AppTheme.onSurface;
+        if (!hex || hex.length < 7)
+            return App.AppTheme.foreground;
         const r = parseInt(hex.slice(1, 3), 16) / 255;
         const g = parseInt(hex.slice(3, 5), 16) / 255;
         const b = parseInt(hex.slice(5, 7), 16) / 255;
         const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        return lum > 0.58 ? App.AppTheme.onSurface : App.AppTheme.onPrimary;
+        return lum > 0.58 ? App.AppTheme.foreground : App.AppTheme.primaryForeground;
     }
     function userTint(hex) {
-        if (!hex || hex.length < 7) return App.AppTheme.surfaceContainerHigh;
+        if (!hex || hex.length < 7)
+            return App.AppTheme.surfaceContainerHigh;
         const r = parseInt(hex.slice(1, 3), 16) / 255;
         const g = parseInt(hex.slice(3, 5), 16) / 255;
         const b = parseInt(hex.slice(5, 7), 16) / 255;
@@ -117,16 +124,32 @@ ApplicationWindow {
         }
     ]
     property var recurrences: [
-        { id: "none", name: "Does not repeat" },
-        { id: "daily", name: "Daily" },
-        { id: "weekdays", name: "Weekdays" },
-        { id: "weekly", name: "Weekly" },
-        { id: "monthly", name: "Monthly" }
+        {
+            id: "none",
+            name: "Does not repeat"
+        },
+        {
+            id: "daily",
+            name: "Daily"
+        },
+        {
+            id: "weekdays",
+            name: "Weekdays"
+        },
+        {
+            id: "weekly",
+            name: "Weekly"
+        },
+        {
+            id: "monthly",
+            name: "Monthly"
+        }
     ]
     function recurrenceName(value) {
         for (let item of recurrences)
-            if (item.id === value) return item.name
-        return value
+            if (item.id === value)
+                return item.name;
+        return value;
     }
     App.AppDialog {
         id: applicationSettings
@@ -134,18 +157,15 @@ ApplicationWindow {
         title: "Settings"
         anchors.centerIn: parent
         width: Math.min(window.width - 40, 560)
-        height: Math.min(window.height - 40, 560)
+        height: Math.min(window.height - 16, 640)
         modal: true
-        property string defaultProjectIdChoice: ""
         function showSettings() {
             taskModel.clearError();
-            defaultProjectIdChoice = taskModel.settings.defaultProjectId || ""
-            defaultProject.currentIndex = defaultProject.model.findIndex(item => item.id === defaultProjectIdChoice)
-            notificationsEnabled.checked = taskModel.settings.notificationsEnabled
-            notificationDays.value = taskModel.settings.notificationDaysBefore || 0
-            dmsShowNext.checked = taskModel.settings.dmsShowNextTask
-            dmsUseDefault.checked = taskModel.settings.dmsUseDefaultProject
-            open()
+            notificationsEnabled.checked = taskModel.settings.notificationsEnabled;
+            notificationDays.value = taskModel.settings.notificationDaysBefore || 0;
+            dmsShowNext.checked = taskModel.settings.dmsShowNextTask;
+            dmsUseDefault.checked = taskModel.settings.dmsUseDefaultProject;
+            open();
         }
         ColumnLayout {
             anchors.fill: parent
@@ -155,20 +175,10 @@ ApplicationWindow {
                 subtitle: "Defaults and desktop integration"
                 Layout.fillWidth: true
             }
-            Label { text: "Default capture project"; font.bold: true }
-            App.AppComboBox {
-                id: defaultProject
-                objectName: "defaultProjectSetting"
-                Layout.fillWidth: true
-                model: taskModel.projects.filter(item => !item.archived)
-                textRole: "displayName"
-                valueRole: "id"
-                onActivated: applicationSettings.defaultProjectIdChoice = currentValue
-                onCurrentIndexChanged: if (currentIndex >= 0 && currentIndex < count)
-                    applicationSettings.defaultProjectIdChoice = model[currentIndex].id
-                Accessible.name: "Default capture project"
+            Label {
+                text: "Notifications"
+                font.bold: true
             }
-            Label { text: "Notifications"; font.bold: true }
             App.AppSwitch {
                 id: notificationsEnabled
                 objectName: "notificationsEnabledSetting"
@@ -176,8 +186,10 @@ ApplicationWindow {
             }
             RowLayout {
                 enabled: notificationsEnabled.checked
-                Label { text: "Notify before the task date" }
-                    App.AppSpinBox {
+                Label {
+                    text: "Notify before the task date"
+                }
+                App.AppSpinBox {
                     id: notificationDays
                     objectName: "notificationDaysSetting"
                     from: 0
@@ -185,9 +197,14 @@ ApplicationWindow {
                     editable: true
                     Accessible.name: "Notification days before"
                 }
-                Label { text: notificationDays.value === 1 ? "day" : "days" }
+                Label {
+                    text: notificationDays.value === 1 ? "day" : "days"
+                }
             }
-            Label { text: "DankMaterialShell"; font.bold: true }
+            Label {
+                text: "DankMaterialShell"
+                font.bold: true
+            }
             App.AppSwitch {
                 id: dmsShowNext
                 objectName: "dmsShowNextSetting"
@@ -198,7 +215,10 @@ ApplicationWindow {
                 objectName: "dmsUseDefaultSetting"
                 text: "Send DMS quick add to the default project"
             }
-            Label { text: "niri setup"; font.bold: true }
+            Label {
+                text: "niri setup"
+                font.bold: true
+            }
             Label {
                 Layout.fillWidth: true
                 text: "Include /usr/local/share/yatl/niri/yatl.kdl in ~/.config/niri/config.kdl. Run niri validate before reloading. YaTL never edits your compositor configuration."
@@ -210,19 +230,23 @@ ApplicationWindow {
                 color: App.AppTheme.error
                 wrapMode: Text.Wrap
             }
-            Item { Layout.fillHeight: true }
+            Item {
+                Layout.fillHeight: true
+            }
             RowLayout {
                 Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                App.AppButton { text: "Cancel"; variant: "text"; onClicked: applicationSettings.close() }
+                Item {
+                    Layout.fillWidth: true
+                }
+                App.AppButton {
+                    text: "Cancel"
+                    variant: "text"
+                    onClicked: applicationSettings.close()
+                }
                 App.AppButton {
                     objectName: "saveApplicationSettings"
                     text: "Save settings"
-                    onClicked: if (taskModel.saveSettings(applicationSettings.defaultProjectIdChoice,
-                                                           notificationsEnabled.checked,
-                                                           notificationDays.value,
-                                                           dmsShowNext.checked,
-                                                           dmsUseDefault.checked))
+                    onClicked: if (taskModel.saveSettings("", notificationsEnabled.checked, notificationDays.value, dmsShowNext.checked, dmsUseDefault.checked))
                         applicationSettings.close()
                 }
             }
@@ -240,7 +264,7 @@ ApplicationWindow {
             tagId = id;
             const tag = window.tagInfo(id);
             tagName.text = tag.name || "";
-            tagColor.text = tag.color || App.AppTheme.primary;
+            tagColor.selectedColor = tag.color || App.AppTheme.primary;
             open();
         }
         onOpened: tagName.forceActiveFocus()
@@ -262,13 +286,13 @@ ApplicationWindow {
                 Accessible.name: "Tag name"
             }
             Label {
-                text: "Color (#RRGGBB)"
+                text: "Color"
             }
-            App.AppTextField {
+            App.AppColorPicker {
                 id: tagColor
                 objectName: "tagColor"
                 Layout.fillWidth: true
-                Accessible.name: "Tag color"
+                accessibleName: "Tag color"
             }
             Label {
                 Layout.fillWidth: true
@@ -289,7 +313,7 @@ ApplicationWindow {
                     objectName: "saveTagButton"
                     text: tagDialog.tagId.length > 0 ? "Save tag" : "Create tag"
                     onClicked: {
-                        const saved = tagDialog.tagId.length > 0 ? taskModel.editTag(tagDialog.tagId, tagName.text, tagColor.text) : taskModel.addTag(tagName.text, tagColor.text);
+                        const saved = tagDialog.tagId.length > 0 ? taskModel.editTag(tagDialog.tagId, tagName.text, tagColor.normalizedColor) : taskModel.addTag(tagName.text, tagColor.normalizedColor);
                         if (saved)
                             tagDialog.close();
                     }
@@ -307,7 +331,7 @@ ApplicationWindow {
         function showSettings() {
             taskModel.clearError();
             managedName.text = taskModel.projectInfo.name;
-            managedColor.text = taskModel.projectInfo.color;
+            managedColor.selectedColor = taskModel.projectInfo.color || App.AppTheme.primary;
             open();
         }
         onClosed: taskModel.clearError()
@@ -328,13 +352,13 @@ ApplicationWindow {
                 Accessible.name: "Project name"
             }
             Label {
-                text: "Color (#RRGGBB)"
+                text: "Color"
             }
-            App.AppTextField {
+            App.AppColorPicker {
                 id: managedColor
                 objectName: "managedColor"
                 Layout.fillWidth: true
-                Accessible.name: "Project color"
+                accessibleName: "Project color"
             }
             Label {
                 text: taskModel.error
@@ -354,7 +378,7 @@ ApplicationWindow {
                 App.AppButton {
                     objectName: "saveProjectButton"
                     text: "Save project"
-                    onClicked: if (taskModel.editProject(managedName.text, managedColor.text))
+                    onClicked: if (taskModel.editProject(managedName.text, managedColor.normalizedColor))
                         manageProject.close()
                 }
             }
@@ -470,7 +494,7 @@ ApplicationWindow {
         title: "Edit task"
         anchors.centerIn: parent
         width: Math.min(window.width - 40, 560)
-        height: Math.min(window.height - 40, 540)
+        height: Math.min(window.height - 16, 640)
         modal: true
         function editTask(id, taskTitle, taskNote, project, taskListId, scheduled, due, taskPriority, taskTags, taskRecurrence) {
             taskModel.clearError();
@@ -504,148 +528,156 @@ ApplicationWindow {
                 subtitle: "Title and notes"
                 Layout.fillWidth: true
             }
-            App.AppTextField {
-                id: editTitle
-                objectName: "editTitle"
-                Layout.fillWidth: true
-                Accessible.name: "Task title"
-            }
-            App.AppSectionHeader {
-                title: "Organization"
-                subtitle: "Project and list"
-                Layout.fillWidth: true
-            }
-            App.AppComboBox {
-                id: editDestination
-                objectName: "editDestination"
-                Layout.fillWidth: true
-                model: taskModel.projects.filter(item => !item.archived)
-                textRole: "name"
-                valueRole: "id"
-                currentIndex: window.choiceIndex(model, editor.destinationId)
-                onActivated: {
-                    editor.destinationId = currentValue;
-                    editor.listId = "";
-                }
-                Accessible.name: "Move to project"
-            }
-            App.AppComboBox {
-                objectName: "editTaskList"
-                Layout.fillWidth: true
-                model: window.listChoices(editor.destinationId)
-                textRole: "name"
-                valueRole: "id"
-                currentIndex: window.choiceIndex(model, editor.listId)
-                onActivated: editor.listId = currentValue
-                Accessible.name: "Task list"
-            }
-            App.AppSectionHeader {
-                title: "Planning"
-                subtitle: "Dates, priority, and recurrence"
-                Layout.fillWidth: true
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                App.AppDateField {
-                    id: editScheduled
-                    objectName: "editScheduled"
-                    Layout.fillWidth: true
-                    Accessible.name: "Scheduled date"
-                }
-                App.AppDateField {
-                    id: editDue
-                    objectName: "editDue"
-                    Layout.fillWidth: true
-                    Accessible.name: "Due date"
-                }
-                App.AppComboBox {
-                    id: editPriority
-                    objectName: "editPriority"
-                    model: window.priorities
-                    textRole: "name"
-                    valueRole: "value"
-                    currentIndex: editor.priority
-                    onActivated: editor.priority = currentValue
-                    Accessible.name: "Priority"
-                }
-            }
-            App.AppComboBox {
-                id: editRecurrence
-                objectName: "editRecurrence"
-                Layout.fillWidth: true
-                model: window.recurrences
-                textRole: "name"
-                valueRole: "id"
-                currentIndex: window.choiceIndex(model, editor.recurrence)
-                onActivated: editor.recurrence = currentValue
-                Accessible.name: "Recurrence"
-            }
-            Label {
-                text: "Tags"
-                visible: taskModel.tags.length > 0
-            }
-            App.AppSectionHeader {
-                title: "Tags"
-                subtitle: "Optional labels"
-                visible: taskModel.tags.length > 0
-                Layout.fillWidth: true
-            }
             ScrollView {
-                Layout.fillWidth: true
-                Layout.preferredHeight: taskModel.tags.length > 0 ? 64 : 0
-                visible: taskModel.tags.length > 0
-                contentWidth: availableWidth
-                Flow {
-                    width: parent.width
-                    spacing: 6
-                    Repeater {
-                        model: taskModel.tags
-                        App.AppSwitch {
-                            required property var modelData
-                            objectName: "editTag_" + modelData.id
-                            text: modelData.name
-                            checked: editor.tagIds.indexOf(modelData.id) >= 0
-                            onClicked: editor.setTag(modelData.id, checked)
-                            Accessible.name: "Assign tag " + modelData.name
-                        }
-                    }
-                }
-            }
-            ScrollView {
+                id: editorBody
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
                 ColumnLayout {
                     width: parent.width
+                    App.AppTextField {
+                        id: editTitle
+                        objectName: "editTitle"
+                        Layout.fillWidth: true
+                        Accessible.name: "Task title"
+                    }
                     App.AppSectionHeader {
-                        title: "Notes"
-                        subtitle: "Additional context"
+                        title: "Organization"
+                        subtitle: "Project and list"
                         Layout.fillWidth: true
                     }
-                    TextArea {
-                        id: editNote
-                        objectName: "editNote"
+                    App.AppComboBox {
+                        id: editDestination
+                        objectName: "editDestination"
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        placeholderText: "Notes"
-                        textFormat: TextEdit.PlainText
-                        wrapMode: TextEdit.Wrap
-                        color: App.AppTheme.onSurface
-                        placeholderTextColor: App.AppTheme.onSurfaceVariant
-                        background: Rectangle {
-                            color: App.AppTheme.surface
-                            radius: App.AppTheme.controlRadius
-                            border.color: editNote.activeFocus ? App.AppTheme.primary : App.AppTheme.outline
-                            border.width: editNote.activeFocus ? 2 : 1
+                        model: taskModel.projects.filter(item => !item.archived)
+                        textRole: "name"
+                        valueRole: "id"
+                        currentIndex: window.choiceIndex(model, editor.destinationId)
+                        onActivated: {
+                            editor.destinationId = currentValue;
+                            editor.listId = "";
                         }
-                        Accessible.name: "Task notes"
+                        Accessible.name: "Move to project"
+                    }
+                    App.AppComboBox {
+                        objectName: "editTaskList"
+                        Layout.fillWidth: true
+                        model: window.listChoices(editor.destinationId)
+                        textRole: "name"
+                        valueRole: "id"
+                        currentIndex: window.choiceIndex(model, editor.listId)
+                        onActivated: editor.listId = currentValue
+                        Accessible.name: "Task list"
+                    }
+                    App.AppSectionHeader {
+                        title: "Planning"
+                        subtitle: "Dates, priority, and recurrence"
+                        Layout.fillWidth: true
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        App.AppDateField {
+                            id: editScheduled
+                            objectName: "editScheduled"
+                            Layout.fillWidth: true
+                            Accessible.name: "Scheduled date"
+                        }
+                        App.AppDateField {
+                            id: editDue
+                            objectName: "editDue"
+                            Layout.fillWidth: true
+                            Accessible.name: "Due date"
+                        }
+                        App.AppComboBox {
+                            id: editPriority
+                            objectName: "editPriority"
+                            model: window.priorities
+                            textRole: "name"
+                            valueRole: "value"
+                            currentIndex: editor.priority
+                            onActivated: editor.priority = currentValue
+                            Accessible.name: "Priority"
+                        }
+                    }
+                    App.AppComboBox {
+                        id: editRecurrence
+                        objectName: "editRecurrence"
+                        Layout.fillWidth: true
+                        model: window.recurrences
+                        textRole: "name"
+                        valueRole: "id"
+                        currentIndex: window.choiceIndex(model, editor.recurrence)
+                        onActivated: editor.recurrence = currentValue
+                        Accessible.name: "Recurrence"
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        App.AppSectionHeader {
+                            title: "Tags"
+                            subtitle: taskModel.tags.length > 0 ? "Assign labels" : "Create a label to assign it"
+                            Layout.fillWidth: true
+                        }
+                        App.AppButton {
+                            text: "New tag"
+                            variant: "text"
+                            onClicked: tagDialog.showTag("")
+                        }
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: taskModel.tags.length > 0 ? 88 : 0
+                        visible: taskModel.tags.length > 0
+                        spacing: 6
+                        Repeater {
+                            model: taskModel.tags
+                            App.AppSwitch {
+                                required property var modelData
+                                objectName: "editTag_" + modelData.id
+                                text: modelData.name
+                                checked: editor.tagIds.indexOf(modelData.id) >= 0
+                                onClicked: editor.setTag(modelData.id, checked)
+                                Accessible.name: "Assign tag " + modelData.name
+                            }
+                        }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        App.AppSectionHeader {
+                            title: "Notes"
+                            subtitle: "Additional context"
+                            Layout.fillWidth: true
+                        }
+                        TextArea {
+                            id: editNote
+                            objectName: "editNote"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 220
+                            Layout.minimumHeight: 220
+                            Layout.leftMargin: 1
+                            Layout.rightMargin: 1
+                            placeholderText: "Notes"
+                            textFormat: TextEdit.PlainText
+                            wrapMode: TextEdit.Wrap
+                            color: App.AppTheme.foreground
+                            placeholderTextColor: App.AppTheme.mutedForeground
+                            background: Rectangle {
+                                color: App.AppTheme.surface
+                                radius: App.AppTheme.controlRadius
+                                border.color: editNote.activeFocus ? App.AppTheme.primary : App.AppTheme.outline
+                                border.width: editNote.activeFocus ? 2 : 1
+                            }
+                            Accessible.name: "Task notes"
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: taskModel.error
+                        color: App.AppTheme.error
+                        wrapMode: Text.Wrap
                     }
                 }
-            }
-            Label {
-                Layout.fillWidth: true
-                text: taskModel.error
-                color: App.AppTheme.error
-                wrapMode: Text.Wrap
             }
             RowLayout {
                 Item {
@@ -654,6 +686,7 @@ ApplicationWindow {
                 App.AppButton {
                     objectName: "cancelEditButton"
                     text: "Cancel"
+                    variant: "text"
                     onClicked: editor.close()
                 }
                 App.AppButton {
@@ -668,7 +701,8 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+N"
         onActivated: {
-            if (taskModel.view !== "project") taskModel.view = "project";
+            if (taskModel.view !== "project")
+                taskModel.view = "project";
             titleInput.forceActiveFocus();
         }
     }
@@ -725,14 +759,10 @@ ApplicationWindow {
                     text: "Inbox"
                     selected: taskModel.view === "project" && taskModel.projectId === ""
                     Layout.fillWidth: true
-                    onClicked: { taskModel.view = "project"; taskModel.projectId = ""; }
-                }
-                App.AppNavigationItem {
-                    objectName: "projectsViewButton"
-                    text: "Projects"
-                    selected: taskModel.view === "project" && taskModel.projectId !== ""
-                    Layout.fillWidth: true
-                    onClicked: taskModel.view = "project"
+                    onClicked: {
+                        taskModel.view = "project";
+                        taskModel.projectId = "";
+                    }
                 }
                 ScrollView {
                     id: projectNavigation
@@ -744,7 +774,7 @@ ApplicationWindow {
                         width: projectNavigation.availableWidth
                         Label {
                             text: "Projects"
-                            color: App.AppTheme.onSurfaceVariant
+                            color: App.AppTheme.mutedForeground
                             font.pixelSize: App.AppTheme.bodySize
                             font.bold: true
                             Layout.fillWidth: true
@@ -759,7 +789,10 @@ ApplicationWindow {
                                 text: modelData.displayName
                                 selected: taskModel.view === "project" && taskModel.projectId === modelData.id
                                 Layout.fillWidth: true
-                                onClicked: { taskModel.view = "project"; taskModel.projectId = modelData.id; }
+                                onClicked: {
+                                    taskModel.view = "project";
+                                    taskModel.projectId = modelData.id;
+                                }
                             }
                         }
                     }
@@ -777,495 +810,522 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.margins: App.AppTheme.space6
             spacing: App.AppTheme.space4
-        RowLayout {
-            Layout.fillWidth: true
-            App.AppSectionHeader {
-                title: "YaTL"
-                subtitle: window.viewTitle()
-            }
-            Item {
+            RowLayout {
                 Layout.fillWidth: true
+                App.AppSectionHeader {
+                    title: window.viewTitle()
+                    subtitle: taskModel.view === "project" && taskModel.projectId !== "" ? (taskModel.projectInfo.archived ? "Archived project" : "Project") : "YaTL"
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
+                App.AppSwitch {
+                    objectName: "showArchived"
+                    visible: taskModel.view === "project"
+                    text: "Show archived"
+                    checked: taskModel.showArchived
+                    onToggled: taskModel.showArchived = checked
+                }
+                Rectangle {
+                    visible: taskModel.view === "project" && taskModel.projectId !== ""
+                    Layout.preferredWidth: 12
+                    Layout.preferredHeight: 24
+                    radius: 3
+                    color: taskModel.projectInfo.color || App.AppTheme.primary
+                    Accessible.name: "Project color"
+                }
+                App.AppIconButton {
+                    objectName: "projectActionsButton"
+                    visible: false
+                    iconText: "⋯"
+                    Accessible.name: "Project actions"
+                    onClicked: projectActions.open()
+                }
+                Label {
+                    text: "LOCAL · PRIVATE"
+                    font.pixelSize: 11
+                    color: App.AppTheme.mutedForeground
+                }
+                App.AppButton {
+                    objectName: "applicationSettingsButton"
+                    text: "Settings"
+                    variant: "tonal"
+                    onClicked: applicationSettings.showSettings()
+                }
             }
-            App.AppSwitch {
-                objectName: "showArchived"
-                visible: taskModel.view === "project"
-                text: "Show archived"
-                checked: taskModel.showArchived
-                onToggled: taskModel.showArchived = checked
+            RowLayout {
+                Layout.fillWidth: true
+                App.AppButton {
+                    objectName: "legacyProjectsViewButton"
+                    text: "Projects"
+                    checkable: true
+                    checked: taskModel.view === "project"
+                    visible: false
+                    onClicked: taskModel.view = "project"
+                }
+                App.AppButton {
+                    objectName: "legacyTodayViewButton"
+                    text: "Today"
+                    checkable: true
+                    checked: taskModel.view === "today"
+                    visible: false
+                    onClicked: taskModel.view = "today"
+                }
+                App.AppButton {
+                    objectName: "legacyUpcomingViewButton"
+                    text: "Upcoming"
+                    checkable: true
+                    checked: taskModel.view === "upcoming"
+                    visible: false
+                    onClicked: taskModel.view = "upcoming"
+                }
+                App.AppButton {
+                    objectName: "legacySearchViewButton"
+                    text: "Search"
+                    checkable: true
+                    checked: taskModel.view === "search"
+                    visible: false
+                    onClicked: taskModel.view = "search"
+                }
+                App.AppTextField {
+                    id: searchInput
+                    objectName: "searchInput"
+                    visible: taskModel.view === "search"
+                    Layout.fillWidth: true
+                    placeholderText: "Search tasks, notes, projects, lists, and tags"
+                    text: taskModel.searchText
+                    onTextEdited: taskModel.searchText = text
+                    Accessible.name: "Search"
+                }
+                Item {
+                    Layout.fillWidth: taskModel.view !== "search"
+                }
             }
-            Label {
-                text: "LOCAL · PRIVATE"
-                font.pixelSize: 11
-                color: App.AppTheme.onSurfaceVariant
-            }
-            App.AppButton {
-                objectName: "applicationSettingsButton"
-                text: "Settings"
-                variant: "tonal"
-                onClicked: applicationSettings.showSettings()
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            App.AppButton {
-                objectName: "legacyProjectsViewButton"
-                text: "Projects"
-                checkable: true
-                checked: taskModel.view === "project"
+            RowLayout {
+                Layout.fillWidth: true
                 visible: false
-                onClicked: taskModel.view = "project"
-            }
-            App.AppButton {
-                objectName: "legacyTodayViewButton"
-                text: "Today"
-                checkable: true
-                checked: taskModel.view === "today"
-                visible: false
-                onClicked: taskModel.view = "today"
-            }
-            App.AppButton {
-                objectName: "legacyUpcomingViewButton"
-                text: "Upcoming"
-                checkable: true
-                checked: taskModel.view === "upcoming"
-                visible: false
-                onClicked: taskModel.view = "upcoming"
-            }
-            App.AppButton {
-                objectName: "legacySearchViewButton"
-                text: "Search"
-                checkable: true
-                checked: taskModel.view === "search"
-                visible: false
-                onClicked: taskModel.view = "search"
-            }
-            App.AppTextField {
-                id: searchInput
-                objectName: "searchInput"
-                visible: taskModel.view === "search"
-                Layout.fillWidth: true
-                placeholderText: "Search tasks, notes, projects, lists, and tags"
-                text: taskModel.searchText
-                onTextEdited: taskModel.searchText = text
-                Accessible.name: "Search"
-            }
-            Item {
-                Layout.fillWidth: taskModel.view !== "search"
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            visible: taskModel.view === "project"
-            z: 4
-            Rectangle {
-                width: 12
-                height: 24
-                radius: 3
-                color: taskModel.projectInfo.color || App.AppTheme.primary
-                Accessible.name: "Project color"
-            }
-            App.AppComboBox {
-                id: destination
-                objectName: "projectSelector"
-                Layout.fillWidth: true
-                model: taskModel.projects
-                textRole: "displayName"
-                valueRole: "id"
-                currentIndex: window.projectIndex(taskModel.projectId)
-                onActivated: taskModel.projectId = currentValue
-                Accessible.name: "Project"
-            }
-            App.AppIconButton {
-                objectName: "projectUpButton"
-                text: "↑"
-                enabled: taskModel.projectId !== "" && !taskModel.projectInfo.archived && destination.currentIndex > 1
-                Accessible.name: "Move project up"
-                onClicked: taskModel.moveProject("up")
-            }
-            App.AppIconButton {
-                objectName: "projectDownButton"
-                text: "↓"
-                enabled: taskModel.projectId !== "" && !taskModel.projectInfo.archived && destination.currentIndex < destination.count - 1
-                Accessible.name: "Move project down"
-                onClicked: taskModel.moveProject("down")
-            }
-            App.AppButton {
-                objectName: "projectSettingsButton"
-                text: "Settings"
-                enabled: taskModel.projectId !== "" && !taskModel.projectInfo.archived
-                onClicked: manageProject.showSettings()
-            }
-            App.AppButton {
-                objectName: "archiveProjectButton"
-                text: taskModel.projectInfo.archived ? "Restore" : "Archive"
-                variant: taskModel.projectInfo.archived ? "tonal" : "destructive"
-                enabled: taskModel.projectId !== ""
-                onClicked: taskModel.archiveProject(!taskModel.projectInfo.archived)
-            }
-            App.AppButton {
-                objectName: "newProjectButton"
-                text: "New project"
-                onClicked: projectDialog.open()
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            visible: taskModel.view === "project" && taskModel.projectId !== ""
-            z: 1
-            App.AppComboBox {
-                id: listSelector
-                objectName: "listSelector"
-                Layout.fillWidth: true
-                model: [
-                    {
-                        id: "*",
-                        name: "All tasks"
+                z: 4
+                Rectangle {
+                    width: 12
+                    height: 24
+                    radius: 3
+                    color: taskModel.projectInfo.color || App.AppTheme.primary
+                    Accessible.name: "Project color"
+                }
+                App.AppComboBox {
+                    id: destination
+                    objectName: "projectSelector"
+                    Layout.fillWidth: true
+                    model: taskModel.projects
+                    textRole: "displayName"
+                    valueRole: "id"
+                    currentIndex: window.projectIndex(taskModel.projectId)
+                    onActivated: taskModel.projectId = currentValue
+                    Accessible.name: "Project"
+                }
+                App.AppMenu {
+                    id: projectActions
+                    MenuItem {
+                        text: "Project settings"
+                        enabled: !taskModel.projectInfo.archived
+                        onTriggered: manageProject.showSettings()
                     }
-                ].concat(window.listChoices(taskModel.projectId))
-                textRole: "name"
-                valueRole: "id"
-                currentIndex: window.choiceIndex(model, taskModel.listFilter)
-                onActivated: taskModel.listFilter = currentValue
-                Accessible.name: "Filter by task list"
-            }
-            App.AppIconButton {
-                objectName: "listUpButton"
-                text: "↑"
-                enabled: !taskModel.projectInfo.archived && window.listOrderIndex(taskModel.listFilter) > 0
-                Accessible.name: "Move task list up"
-                onClicked: taskModel.moveList("up")
-            }
-            App.AppIconButton {
-                objectName: "listDownButton"
-                text: "↓"
-                enabled: !taskModel.projectInfo.archived && window.listOrderIndex(taskModel.listFilter) >= 0 && window.listOrderIndex(taskModel.listFilter) < taskModel.listsFor(taskModel.projectId).length - 2
-                Accessible.name: "Move task list down"
-                onClicked: taskModel.moveList("down")
-            }
-            App.AppButton {
-                objectName: "newListButton"
-                text: "New list"
-                z: 2
-                enabled: taskModel.view === "project" && taskModel.projectId !== ""
-                onClicked: if (!taskModel.projectInfo.archived) listDialog.showList(false)
-            }
-            App.AppButton {
-                objectName: "renameListButton"
-                text: "Rename list"
-                enabled: !taskModel.projectInfo.archived && taskModel.listFilter !== "*" && taskModel.listFilter !== ""
-                onClicked: listDialog.showList(true)
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            visible: taskModel.view === "project"
-            z: 3
-            Rectangle {
-                width: 12
-                height: 24
-                radius: 6
-                color: taskModel.tagFilter === "*" ? App.AppTheme.surfaceContainerHighest : (window.tagInfo(taskModel.tagFilter).color || App.AppTheme.primary)
-                Accessible.name: "Tag color"
-            }
-            App.AppComboBox {
-                id: tagSelector
-                objectName: "tagSelector"
-                Layout.fillWidth: true
-                model: [
-                    {
-                        id: "*",
-                        name: "All tags",
-                        color: App.AppTheme.surfaceContainerHighest
+                    MenuItem {
+                        text: "Move up"
+                        enabled: !taskModel.projectInfo.archived && destination.currentIndex > 1
+                        onTriggered: taskModel.moveProject("up")
                     }
-                ].concat(taskModel.tags)
-                textRole: "name"
-                valueRole: "id"
-                currentIndex: window.choiceIndex(model, taskModel.tagFilter)
-                onActivated: taskModel.tagFilter = currentValue
-                Accessible.name: "Filter by tag"
-            }
-            App.AppButton {
-                objectName: "newTagButton"
-                text: "New tag"
-                onClicked: tagDialog.showTag("")
-            }
-            App.AppButton {
-                objectName: "editTagButton"
-                text: "Edit tag"
-                enabled: taskModel.tagFilter !== "*"
-                onClicked: tagDialog.showTag(taskModel.tagFilter)
-            }
-        }
-        Label {
-            visible: taskModel.view === "project" && !!taskModel.projectInfo.archived
-            text: "Archived project · Restore to make changes"
-            color: App.AppTheme.onSurfaceVariant
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            visible: taskModel.view === "project"
-            enabled: !taskModel.projectInfo.archived
-            z: 5
-            App.AppTextField {
-                id: titleInput
-                objectName: "titleInput"
-                Layout.fillWidth: true
-                placeholderText: "What needs doing?"
-                Accessible.name: "Task title"
-                onAccepted: window.capture()
-                focus: true
-            }
-            App.AppButton {
-                objectName: "addButton"
-                text: "Add task"
-                onClicked: window.capture()
-            }
-        }
-        Label {
-            visible: taskModel.view === "project"
-            text: "Capturing to " + (taskModel.projectId === "" ? "Inbox" : (taskModel.projectInfo.name || destination.currentText))
-            color: App.AppTheme.onSurfaceVariant
-            font.pixelSize: 12
-            Layout.leftMargin: App.AppTheme.space2
-        }
-        Label {
-            objectName: "errorLabel"
-            Layout.fillWidth: true
-            visible: taskModel.error.length > 0
-            text: taskModel.error
-            color: App.AppTheme.error
-            wrapMode: Text.Wrap
-            Accessible.role: Accessible.AlertMessage
-        }
-        RowLayout {
-            visible: taskModel.view === "project"
-            App.AppButton {
-                objectName: "inboxButton"
-                text: "Open"
-                variant: taskModel.filter === "open" ? "tonal" : "text"
-                checkable: true
-                checked: taskModel.filter === "open"
-                onClicked: taskModel.filter = "open"
-            }
-            App.AppButton {
-                objectName: "completedButton"
-                text: "Completed"
-                variant: taskModel.filter === "completed" ? "tonal" : "text"
-                checkable: true
-                checked: taskModel.filter === "completed"
-                onClicked: taskModel.filter = "completed"
-            }
-            App.AppButton {
-                objectName: "archivedTasksButton"
-                text: "Archived"
-                variant: taskModel.filter === "archived" ? "tonal" : "text"
-                checkable: true
-                checked: taskModel.filter === "archived"
-                onClicked: taskModel.filter = "archived"
-            }
-            Item {
-                Layout.fillWidth: true
-            }
-            Label {
-                text: taskModel.count + (taskModel.count === 1 ? " task" : " tasks")
-                color: App.AppTheme.onSurfaceVariant
-            }
-        }
-        ListView {
-            id: taskList
-            objectName: "taskList"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            spacing: 8
-            model: taskModel
-            ScrollBar.vertical: ScrollBar {}
-            delegate: App.AppCard {
-                required property string taskId
-                required property string title
-                required property bool completed
-                required property string completedAt
-                required property string projectId
-                required property string note
-                required property string listId
-                required property string scheduledDate
-                required property string dueDate
-                required property int priority
-                required property string projectName
-                required property string listName
-                required property bool archived
-                required property var tags
-                required property string recurrence
-                required property int index
-                interactive: true
-                z: 3
-                width: taskList.width
-                height: row.implicitHeight + 24
-                color: App.AppTheme.surface
-                border.color: App.AppTheme.outlineVariant
-                RowLayout {
-                    id: row
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.margins: 12
-                    App.AppButton {
-                        visible: !archived
-                        enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                        variant: "tonal"
-                        objectName: "complete_" + taskId
-                        text: completed ? "Reopen" : "Complete"
-                        Accessible.name: (completed ? "Reopen " : "Complete ") + title
-                        onClicked: completed ? taskModel.reopen(taskId) : taskModel.complete(taskId)
+                    MenuItem {
+                        text: "Move down"
+                        enabled: !taskModel.projectInfo.archived && destination.currentIndex < destination.count - 1
+                        onTriggered: taskModel.moveProject("down")
                     }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Label {
-                            Layout.fillWidth: true
-                            visible: tags.length > 0
-                            text: tags.map(tag => tag.name).join(" · ")
-                            font.pixelSize: 11
-                            color: App.AppTheme.onSurface
-                            leftPadding: tags.length > 0 ? 8 : 0
-                            rightPadding: tags.length > 0 ? 8 : 0
-                            background: Rectangle {
-                                visible: tags.length > 0
-                                radius: 10
-                                color: tags.length > 0 ? window.userTint(tags[0].color) : "transparent"
-                                border.color: tags.length > 0 ? tags[0].color : "transparent"
-                                border.width: tags.length > 0 ? 1 : 0
-                            }
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: title
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                            font.strikeout: completed
-                            color: App.AppTheme.onSurface
-                        }
-                        Label {
-                            visible: archived
-                            text: "Archived"
-                            font.pixelSize: 11
-                            color: App.AppTheme.onSurfaceVariant
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            visible: note.length > 0
-                            text: note
-                            textFormat: Text.PlainText
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                            wrapMode: Text.Wrap
-                            color: App.AppTheme.onSurfaceVariant
-                        }
-                        Label {
-                            visible: listId.length > 0 && taskModel.listFilter === "*"
-                            text: window.listName(listId)
-                            font.pixelSize: 11
-                            color: App.AppTheme.onSurfaceVariant
-                        }
-                        Label {
-                            visible: scheduledDate.length > 0 || dueDate.length > 0 || priority > 0
-                            text: (priority > 0 ? window.priorityName(priority) + " · " : "") + (scheduledDate.length > 0 ? "Scheduled " + scheduledDate : "") + (scheduledDate.length > 0 && dueDate.length > 0 ? " · " : "") + (dueDate.length > 0 ? "Due " + dueDate : "")
-                            font.pixelSize: 11
-                            color: dueDate.length > 0 && dueDate < Qt.formatDate(new Date(), "yyyy-MM-dd") && !completed ? App.AppTheme.error : App.AppTheme.onSurfaceVariant
-                        }
-                        Label {
-                            visible: recurrence !== "none"
-                            text: "Repeats " + window.recurrenceName(recurrence).toLowerCase()
-                            font.pixelSize: 11
-                            color: App.AppTheme.onSurfaceVariant
-                        }
-                        Label {
-                            visible: taskModel.view !== "project"
-                            text: (projectName.length > 0 ? projectName : "Inbox") + (listName.length > 0 ? " · " + listName : "")
-                            font.pixelSize: 11
-                            color: App.AppTheme.onSurfaceVariant
-                        }
-                        Label {
-                            visible: completed
-                            text: completed ? "Completed " + new Date(completedAt).toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
-                            font.pixelSize: 11
-                            color: App.AppTheme.onSurfaceVariant
-                        }
-                    }
-                    App.AppIconButton {
-                        objectName: "up_" + taskId
-                        text: "↑"
-                        implicitWidth: 32
-                        visible: taskModel.view === "project" && !archived
-                        enabled: taskModel.view === "project" && !taskModel.projectInfo.archived && index > 0
-                        Accessible.name: "Move up " + title
-                        onClicked: taskModel.moveTask(taskId, "up")
-                    }
-                    App.AppIconButton {
-                        objectName: "down_" + taskId
-                        text: "↓"
-                        implicitWidth: 32
-                        visible: taskModel.view === "project" && !archived
-                        enabled: taskModel.view === "project" && !taskModel.projectInfo.archived && index < taskModel.count - 1
-                        Accessible.name: "Move down " + title
-                        onClicked: taskModel.moveTask(taskId, "down")
-                    }
-                    App.AppButton {
-                        enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                        visible: !archived
-                        variant: "text"
-                        objectName: "edit_" + taskId
-                        text: "Edit"
-                        Accessible.name: "Edit " + title
-                        onClicked: editor.editTask(taskId, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence)
-                    }
-                    App.AppButton {
-                        enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                        variant: archived ? "tonal" : "destructive"
-                        z: 10
-                        objectName: "archive_" + taskId
-                        text: archived ? "Restore" : "Archive"
-                        Accessible.name: (archived ? "Restore " : "Archive ") + title
-                        onClicked: taskModel.archiveTask(taskId, !archived)
-                    }
-                    App.AppIconButton {
-                        objectName: "menu_" + taskId
-                        iconText: "⋯"
-                        Accessible.name: "More actions for " + title
-                        onClicked: taskMenu.open()
-                    }
-                    App.AppMenu {
-                        id: taskMenu
-                        MenuItem {
-                            text: "Edit"
-                            enabled: !archived && (taskModel.view !== "project" || !taskModel.projectInfo.archived)
-                            onTriggered: editor.editTask(taskId, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence)
-                        }
-                        MenuItem {
-                            text: archived ? "Restore" : "Archive"
-                            enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                            onTriggered: taskModel.archiveTask(taskId, !archived)
-                        }
-                        MenuItem {
-                            text: completed ? "Reopen" : "Complete"
-                            visible: !archived
-                            enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                            onTriggered: completed ? taskModel.reopen(taskId) : taskModel.complete(taskId)
-                        }
+                    MenuSeparator {}
+                    MenuItem {
+                        text: taskModel.projectInfo.archived ? "Restore" : "Archive"
+                        onTriggered: taskModel.archiveProject(!taskModel.projectInfo.archived)
                     }
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: taskModel.view === "project" && taskModel.projectId !== ""
+                z: 1
+                App.AppComboBox {
+                    id: listSelector
+                    objectName: "listSelector"
+                    Layout.preferredWidth: 342
+                    model: [
+                        {
+                            id: "*",
+                            name: "All tasks"
+                        }
+                    ].concat(window.listChoices(taskModel.projectId))
+                    textRole: "name"
+                    valueRole: "id"
+                    currentIndex: window.choiceIndex(model, taskModel.listFilter)
+                    onActivated: taskModel.listFilter = currentValue
+                    Accessible.name: "Filter by task list"
+                }
+                App.AppIconButton {
+                    objectName: "listActionsButton"
+                    visible: false
+                    iconText: "⋯"
+                    enabled: !taskModel.projectInfo.archived && taskModel.listFilter !== "*"
+                    Accessible.name: "List actions"
+                    onClicked: listActions.open()
+                }
+                App.AppButton {
+                    objectName: "newListButton"
+                    text: "New list"
+                    z: 10
+                    enabled: taskModel.view === "project" && taskModel.projectId !== ""
+                    onClicked: if (!taskModel.projectInfo.archived)
+                        listDialog.showList(false)
+                }
+                App.AppMenu {
+                    id: listActions
+                    MenuItem {
+                        text: "Rename list"
+                        onTriggered: listDialog.showList(true)
+                    }
+                    MenuItem {
+                        text: "Move up"
+                        enabled: window.listOrderIndex(taskModel.listFilter) > 0
+                        onTriggered: taskModel.moveList("up")
+                    }
+                    MenuItem {
+                        text: "Move down"
+                        enabled: window.listOrderIndex(taskModel.listFilter) >= 0 && window.listOrderIndex(taskModel.listFilter) < taskModel.listsFor(taskModel.projectId).length - 2
+                        onTriggered: taskModel.moveList("down")
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: false
+                z: 3
+                Rectangle {
+                    width: 12
+                    height: 24
+                    radius: 6
+                    color: taskModel.tagFilter === "*" ? App.AppTheme.surfaceContainerHighest : (window.tagInfo(taskModel.tagFilter).color || App.AppTheme.primary)
+                    Accessible.name: "Tag color"
+                }
+                App.AppComboBox {
+                    id: tagSelector
+                    objectName: "tagSelector"
+                    Layout.fillWidth: true
+                    model: [
+                        {
+                            id: "*",
+                            name: "All tags",
+                            color: App.AppTheme.surfaceContainerHighest
+                        }
+                    ].concat(taskModel.tags)
+                    textRole: "name"
+                    valueRole: "id"
+                    currentIndex: window.choiceIndex(model, taskModel.tagFilter)
+                    onActivated: taskModel.tagFilter = currentValue
+                    Accessible.name: "Filter by tag"
+                }
+                App.AppButton {
+                    objectName: "newTagButton"
+                    text: "New tag"
+                    onClicked: tagDialog.showTag("")
+                }
+                App.AppButton {
+                    objectName: "editTagButton"
+                    text: "Edit tag"
+                    enabled: taskModel.tagFilter !== "*"
+                    onClicked: tagDialog.showTag(taskModel.tagFilter)
+                }
+            }
             Label {
-                anchors.centerIn: parent
-                visible: taskModel.count === 0
-                text: taskModel.view === "search" && taskModel.searchText.trim().length === 0 ? "Enter a search term." : (taskModel.view === "today" ? "Nothing planned for today." : (taskModel.view === "upcoming" ? "Nothing planned in the next 28 days." : (taskModel.filter === "archived" ? "Archived tasks will appear here." : (taskModel.filter === "completed" ? "Completed work will appear here." : "No open tasks here. Add your next task above."))))
-                color: App.AppTheme.onSurfaceVariant
+                visible: taskModel.view === "project" && !!taskModel.projectInfo.archived
+                text: "Archived project · Restore to make changes"
+                color: App.AppTheme.mutedForeground
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: taskModel.view === "project"
+                enabled: !taskModel.projectInfo.archived
+                z: 5
+                App.AppTextField {
+                    id: titleInput
+                    objectName: "titleInput"
+                    Layout.fillWidth: true
+                    placeholderText: "What needs doing?"
+                    Accessible.name: "Task title"
+                    onAccepted: window.capture()
+                    focus: true
+                }
+                App.AppButton {
+                    objectName: "addButton"
+                    text: "Add task"
+                    onClicked: window.capture()
+                }
+            }
+            Label {
+                visible: taskModel.view === "project"
+                text: "Capturing to " + (taskModel.projectId === "" ? "Inbox" : (taskModel.projectInfo.name || destination.currentText))
+                color: App.AppTheme.mutedForeground
+                font.pixelSize: 12
+                Layout.leftMargin: App.AppTheme.space2
+            }
+            Label {
+                objectName: "errorLabel"
+                Layout.fillWidth: true
+                visible: taskModel.error.length > 0
+                text: taskModel.error
+                color: App.AppTheme.error
+                wrapMode: Text.Wrap
+                Accessible.role: Accessible.AlertMessage
+            }
+            RowLayout {
+                visible: taskModel.view === "project"
+                App.AppButton {
+                    objectName: "inboxButton"
+                    text: "Open"
+                    variant: taskModel.filter === "open" ? "tonal" : "text"
+                    checkable: true
+                    checked: taskModel.filter === "open"
+                    onClicked: taskModel.filter = "open"
+                }
+                App.AppButton {
+                    objectName: "completedButton"
+                    text: "Completed"
+                    variant: taskModel.filter === "completed" ? "tonal" : "text"
+                    checkable: true
+                    checked: taskModel.filter === "completed"
+                    onClicked: taskModel.filter = "completed"
+                }
+                App.AppButton {
+                    objectName: "archivedTasksButton"
+                    text: "Archived"
+                    variant: taskModel.filter === "archived" ? "tonal" : "text"
+                    checkable: true
+                    checked: taskModel.filter === "archived"
+                    onClicked: taskModel.filter = "archived"
+                }
+                App.AppButton {
+                    objectName: "tagFilterButton"
+                    text: taskModel.tagFilter === "*" ? "Filter" : (window.tagInfo(taskModel.tagFilter).name || "Filter")
+                    variant: taskModel.tagFilter === "*" ? "text" : "tonal"
+                    onClicked: tagActions.open()
+                }
+                App.AppMenu {
+                    id: tagActions
+                    MenuItem {
+                        text: "All tags"
+                        onTriggered: taskModel.tagFilter = "*"
+                    }
+                    MenuSeparator {}
+                    Repeater {
+                        model: taskModel.tags
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: modelData.name
+                            checkable: true
+                            checked: taskModel.tagFilter === modelData.id
+                            onTriggered: taskModel.tagFilter = modelData.id
+                        }
+                    }
+                    MenuSeparator {}
+                    MenuItem {
+                        text: "New tag"
+                        onTriggered: tagDialog.showTag("")
+                    }
+                    MenuItem {
+                        text: "Edit active tag"
+                        enabled: taskModel.tagFilter !== "*"
+                        onTriggered: tagDialog.showTag(taskModel.tagFilter)
+                    }
+                }
+                Item {
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: taskModel.count + (taskModel.count === 1 ? " task" : " tasks")
+                    color: App.AppTheme.mutedForeground
+                }
+            }
+            ListView {
+                id: taskList
+                objectName: "taskList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 8
+                model: taskModel
+                ScrollBar.vertical: ScrollBar {}
+                delegate: App.AppCard {
+                    required property string taskId
+                    required property string title
+                    required property bool completed
+                    required property string completedAt
+                    required property string projectId
+                    required property string note
+                    required property string listId
+                    required property string scheduledDate
+                    required property string dueDate
+                    required property int priority
+                    required property string projectName
+                    required property string listName
+                    required property bool archived
+                    required property var tags
+                    required property string recurrence
+                    required property int index
+                    interactive: true
+                    z: 3
+                    width: taskList.width
+                    height: row.implicitHeight + 24
+                    color: App.AppTheme.surface
+                    border.color: App.AppTheme.outlineVariant
+                    RowLayout {
+                        id: row
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.margins: 12
+                        App.AppButton {
+                            visible: !archived
+                            enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
+                            variant: "tonal"
+                            objectName: "complete_" + taskId
+                            text: completed ? "Reopen" : "Complete"
+                            Accessible.name: (completed ? "Reopen " : "Complete ") + title
+                            onClicked: completed ? taskModel.reopen(taskId) : taskModel.complete(taskId)
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                Layout.fillWidth: true
+                                visible: tags.length > 0
+                                text: tags.map(tag => tag.name).join(" · ")
+                                font.pixelSize: 11
+                                color: App.AppTheme.foreground
+                                leftPadding: tags.length > 0 ? 8 : 0
+                                rightPadding: tags.length > 0 ? 8 : 0
+                                background: Rectangle {
+                                    visible: tags.length > 0
+                                    radius: 10
+                                    color: tags.length > 0 ? window.userTint(tags[0].color) : "transparent"
+                                    border.color: tags.length > 0 ? tags[0].color : "transparent"
+                                    border.width: tags.length > 0 ? 1 : 0
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: title
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                                font.strikeout: completed
+                                color: App.AppTheme.foreground
+                            }
+                            Label {
+                                visible: archived
+                                text: "Archived"
+                                font.pixelSize: 11
+                                color: App.AppTheme.mutedForeground
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                visible: note.length > 0
+                                text: note
+                                textFormat: Text.PlainText
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                                wrapMode: Text.Wrap
+                                color: App.AppTheme.mutedForeground
+                            }
+                            Label {
+                                visible: listId.length > 0 && taskModel.listFilter === "*"
+                                text: window.listName(listId)
+                                font.pixelSize: 11
+                                color: App.AppTheme.mutedForeground
+                            }
+                            Label {
+                                visible: scheduledDate.length > 0 || dueDate.length > 0 || priority > 0
+                                text: (priority > 0 ? window.priorityName(priority) + " · " : "") + (scheduledDate.length > 0 ? "Scheduled " + scheduledDate : "") + (scheduledDate.length > 0 && dueDate.length > 0 ? " · " : "") + (dueDate.length > 0 ? "Due " + dueDate : "")
+                                font.pixelSize: 11
+                                color: dueDate.length > 0 && dueDate < Qt.formatDate(new Date(), "yyyy-MM-dd") && !completed ? App.AppTheme.error : App.AppTheme.mutedForeground
+                            }
+                            Label {
+                                visible: recurrence !== "none"
+                                text: "Repeats " + window.recurrenceName(recurrence).toLowerCase()
+                                font.pixelSize: 11
+                                color: App.AppTheme.mutedForeground
+                            }
+                            Label {
+                                visible: taskModel.view !== "project"
+                                text: (projectName.length > 0 ? projectName : "Inbox") + (listName.length > 0 ? " · " + listName : "")
+                                font.pixelSize: 11
+                                color: App.AppTheme.mutedForeground
+                            }
+                            Label {
+                                visible: completed
+                                text: completed ? "Completed " + new Date(completedAt).toLocaleString(Qt.locale(), Locale.ShortFormat) : ""
+                                font.pixelSize: 11
+                                color: App.AppTheme.mutedForeground
+                            }
+                        }
+                        App.AppIconButton {
+                            id: taskMenuButton
+                            z: 6
+                            objectName: "menu_" + taskId
+                            iconText: "⋯"
+                            Accessible.name: "Edit task " + title
+                            onClicked: window.openTaskEditor(taskId, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence)
+                        }
+                        App.AppMenu {
+                            id: taskMenu
+                            x: taskMenuButton.x - width + taskMenuButton.width
+                            y: taskMenuButton.y + taskMenuButton.height
+                            MenuItem {
+                                text: "Edit"
+                                enabled: !archived && (taskModel.view !== "project" || !taskModel.projectInfo.archived)
+                                onTriggered: editor.editTask(taskId, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence)
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                text: "Move up"
+                                visible: taskModel.view === "project" && !archived
+                                enabled: index > 0
+                                onTriggered: taskModel.moveTask(taskId, "up")
+                            }
+                            MenuItem {
+                                text: "Move down"
+                                visible: taskModel.view === "project" && !archived
+                                enabled: index < taskModel.count - 1
+                                onTriggered: taskModel.moveTask(taskId, "down")
+                            }
+                            MenuItem {
+                                text: archived ? "Restore" : "Archive"
+                                enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
+                                onTriggered: taskModel.archiveTask(taskId, !archived)
+                            }
+                            MenuItem {
+                                text: completed ? "Reopen" : "Complete"
+                                visible: !archived
+                                enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
+                                onTriggered: completed ? taskModel.reopen(taskId) : taskModel.complete(taskId)
+                            }
+                        }
+                    }
+                }
+                Label {
+                    anchors.centerIn: parent
+                    visible: taskModel.count === 0
+                    text: taskModel.view === "search" && taskModel.searchText.trim().length === 0 ? "Enter a search term." : (taskModel.view === "today" ? "Nothing planned for today." : (taskModel.view === "upcoming" ? "Nothing planned in the next 28 days." : (taskModel.filter === "archived" ? "Archived tasks will appear here." : (taskModel.filter === "completed" ? "Completed work will appear here." : "No open tasks here. Add your next task above."))))
+                    color: App.AppTheme.mutedForeground
+                }
+            }
+            Label {
+                text: "Ctrl+N to capture · Changes saved automatically"
+                color: App.AppTheme.mutedForeground
+                font.pixelSize: 12
             }
         }
-        Label {
-            text: "Ctrl+N to capture · Changes saved automatically"
-            color: App.AppTheme.onSurfaceVariant
-            font.pixelSize: 12
-        }
-    }
     }
 }

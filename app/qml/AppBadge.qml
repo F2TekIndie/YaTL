@@ -8,5 +8,5 @@ Rectangle {
     color: AppTheme.primaryContainer
     Accessible.name: label
     Accessible.role: Accessible.StaticText
-    Text { id: badgeText; anchors.centerIn: parent; text: parent.label; color: AppTheme.onPrimaryContainer; font.pixelSize: 12 }
+    Text { id: badgeText; anchors.centerIn: parent; text: parent.label; color: AppTheme.primaryContainerForeground; font.pixelSize: 12 }
 }

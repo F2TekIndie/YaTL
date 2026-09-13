@@ -13,3 +13,5 @@ AppNavigationItem 1.0 AppNavigationItem.qml
 AppSectionHeader 1.0 AppSectionHeader.qml
 AppDateField 1.0 AppDateField.qml
 AppSpinBox 1.0 AppSpinBox.qml
+AppColorPicker 1.0 AppColorPicker.qml
+SettingsDialog 1.0 SettingsDialog.qml

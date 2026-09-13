@@ -13,13 +13,13 @@ ApplicationWindow {
     title: "YaTL Quick Capture"
     color: App.AppTheme.background
     palette.window: App.AppTheme.background
-    palette.windowText: App.AppTheme.onSurface
-    palette.text: App.AppTheme.onSurface
+    palette.windowText: App.AppTheme.foreground
+    palette.text: App.AppTheme.foreground
     palette.base: App.AppTheme.surface
     palette.button: App.AppTheme.surfaceContainerHigh
-    palette.buttonText: App.AppTheme.onSurface
+    palette.buttonText: App.AppTheme.foreground
     palette.highlight: App.AppTheme.primary
-    palette.highlightedText: App.AppTheme.onPrimary
+    palette.highlightedText: App.AppTheme.primaryForeground
 
     function capture() {
         if (taskModel.add(titleInput.text))
@@ -38,7 +38,7 @@ ApplicationWindow {
             text: "Quick capture to Inbox"
             font.pixelSize: 20
             font.bold: true
-            color: App.AppTheme.onSurface
+            color: App.AppTheme.foreground
         }
         RowLayout {
             Layout.fillWidth: true

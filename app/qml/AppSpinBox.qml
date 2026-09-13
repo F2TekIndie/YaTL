@@ -7,14 +7,30 @@ SpinBox {
     editable: true
     contentItem: TextInput {
         text: control.textFromValue(control.value, control.locale)
-        color: control.enabled ? AppTheme.onSurface : AppTheme.onSurfaceVariant
+        color: control.enabled ? AppTheme.foreground : AppTheme.mutedForeground
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
+        leftPadding: 4
+        rightPadding: 32
         selectByMouse: true
         readOnly: !control.editable
     }
-    up.indicator: AppIconButton { iconText: "＋"; implicitWidth: 28; implicitHeight: 20; onClicked: control.increase() }
-    down.indicator: AppIconButton { iconText: "−"; implicitWidth: 28; implicitHeight: 20; onClicked: control.decrease() }
+    up.indicator: AppIconButton {
+        x: control.width - width - 4
+        y: 2
+        iconText: "＋"
+        implicitWidth: 28
+        implicitHeight: 18
+        onClicked: control.increase()
+    }
+    down.indicator: AppIconButton {
+        x: control.width - width - 4
+        y: control.height - height - 2
+        iconText: "−"
+        implicitWidth: 28
+        implicitHeight: 18
+        onClicked: control.decrease()
+    }
     background: Rectangle {
         radius: AppTheme.controlRadius
         color: AppTheme.surface

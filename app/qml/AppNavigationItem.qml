@@ -14,7 +14,7 @@ Button {
     }
     contentItem: Text {
         text: control.text
-        color: control.selected ? AppTheme.onPrimaryContainer : AppTheme.onSurface
+        color: control.selected ? AppTheme.primaryContainerForeground : AppTheme.foreground
         verticalAlignment: Text.AlignVCenter
         leftPadding: 12
     }

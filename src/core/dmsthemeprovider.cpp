@@ -95,5 +95,8 @@ void DmsThemeProvider::reload() {
         ? themeDirectory.absoluteFilePath()
         : themeDirectory.dir().absolutePath();
     if (QDir(watchDirectory).exists() && !watcher_.directories().contains(watchDirectory)) watcher_.addPath(watchDirectory);
-    if (colors_ != previous) emit themeChanged();
+    if (colors_ != previous) {
+        ++revision_;
+        emit themeChanged();
+    }
 }

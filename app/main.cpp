@@ -10,6 +10,7 @@
 #include <QLocalSocket>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <qqml.h>
 #include <QQuickStyle>
 #include <QTextStream>
 #include <QTimer>
@@ -45,12 +46,13 @@ int main(int argc, char *argv[]) {
 
         QLocalServer server;
         server.setSocketOptions(QLocalServer::UserAccessOption);
-        if (!server.listen(serverName)) {
+        bool activationAvailable = server.listen(serverName);
+        if (!activationAvailable) {
             if (!DesktopIpc::request(serverName, initialCommand, 2000).isEmpty()) return 0;
             QLocalServer::removeServer(serverName);
-            if (!server.listen(serverName))
-                throw std::runtime_error(QString("Cannot create the local YaTL activation socket: %1")
-                                             .arg(server.errorString()).toStdString());
+            activationAvailable = server.listen(serverName);
+            if (!activationAvailable)
+                qWarning().noquote() << "YaTL: local activation unavailable:" << server.errorString();
         }
 
         TaskStore store(databasePath);
@@ -72,6 +74,8 @@ int main(int argc, char *argv[]) {
         }
         if (!quickCapture) model.setView(initialView);
         QQuickStyle::setStyle("Fusion");
+        qmlRegisterSingletonType<DmsThemeProvider>("YaTL", 1, 0, "DmsTheme",
+            [](QQmlEngine *engine, QJSEngine *) -> QObject * { return new DmsThemeProvider(engine); });
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("taskModel", &model);
         engine.rootContext()->setContextProperty("dmsTheme", &theme);

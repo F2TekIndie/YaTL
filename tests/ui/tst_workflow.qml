@@ -62,7 +62,7 @@ Item {
             function test_projectEditMoveReopen() {
                 appWindow.requestActivate();
                 tryCompare(appWindow, "active", true);
-                mouseClick(findChild(appWindow, "newProjectButton"));
+                mouseClick(findChild(appWindow, "sidebarNewProjectButton"));
                 const dialog = findChild(appWindow, "projectDialog");
                 tryCompare(dialog, "opened", true);
                 findChild(appWindow, "projectName").text = "Release";
@@ -79,7 +79,8 @@ Item {
                     return list.itemAtIndex(0) !== null;
                 });
                 const id = list.itemAtIndex(0).taskId;
-                mouseClick(findChild(list.itemAtIndex(0), "edit_" + id));
+                const draft = list.itemAtIndex(0);
+                mouseClick(findChild(draft, "menu_" + id));
                 const editor = findChild(appWindow, "taskEditor");
                 tryCompare(editor, "opened", true);
                 waitForRendering(editor.contentItem);
@@ -112,13 +113,14 @@ Item {
                 tryVerify(function () {
                     return list.itemAtIndex(0) !== null;
                 });
-                mouseClick(findChild(list.itemAtIndex(0), "edit_" + id));
+                const completedDraft = list.itemAtIndex(0);
+                editor.editTask(id, completedDraft.title, completedDraft.note, completedDraft.projectId, completedDraft.listId, completedDraft.scheduledDate, completedDraft.dueDate, completedDraft.priority, completedDraft.tags, completedDraft.recurrence);
                 tryCompare(editor, "opened", true);
                 selectProject(findChild(appWindow, "editDestination"), 0);
                 mouseClick(findChild(appWindow, "saveEditButton"));
                 tryCompare(editor, "visible", false);
                 tryCompare(taskModel, "count", 0);
-                selectProject(findChild(appWindow, "projectSelector"), 0);
+                taskModel.projectId = "";
                 tryCompare(taskModel, "count", 1);
                 tryVerify(function () {
                     return list.itemAtIndex(0) !== null;
@@ -131,15 +133,15 @@ Item {
                 appWindow.requestActivate();
                 tryCompare(appWindow, "active", true);
                 taskModel.view = "project";
-                mouseClick(findChild(appWindow, "newProjectButton"));
+                mouseClick(findChild(appWindow, "sidebarNewProjectButton"));
                 const projectDialog = findChild(appWindow, "projectDialog");
                 tryCompare(projectDialog, "opened", true);
                 findChild(appWindow, "projectName").text = "Planning";
                 mouseClick(findChild(appWindow, "createProjectButton"));
                 tryCompare(projectDialog, "visible", false);
 
-                mouseClick(findChild(appWindow, "newListButton"));
                 const listDialog = findChild(appWindow, "listDialog");
+                listDialog.showList(false);
                 tryCompare(listDialog, "opened", true);
                 findChild(appWindow, "listName").text = "Milestones";
                 mouseClick(findChild(appWindow, "saveListButton"));
@@ -153,8 +155,9 @@ Item {
                     return tasks.itemAtIndex(0) !== null;
                 });
                 const id = tasks.itemAtIndex(0).taskId;
-                mouseClick(findChild(tasks.itemAtIndex(0), "edit_" + id));
                 const editor = findChild(appWindow, "taskEditor");
+                const planned = tasks.itemAtIndex(0);
+                editor.editTask(id, planned.title, planned.note, planned.projectId, planned.listId, planned.scheduledDate, planned.dueDate, planned.priority, planned.tags, planned.recurrence);
                 tryCompare(editor, "opened", true);
 
                 const today = Qt.formatDate(new Date(), "yyyy-MM-dd");
@@ -182,12 +185,15 @@ Item {
                 compare(tasks.itemAtIndex(0).priority, 3);
                 compare(tasks.itemAtIndex(0).recurrence, "weekly");
 
-                mouseClick(findChild(tasks.itemAtIndex(0), "edit_" + id));
+                const recurring = tasks.itemAtIndex(0);
+                editor.editTask(id, recurring.title, recurring.note, recurring.projectId, recurring.listId, recurring.scheduledDate, recurring.dueDate, recurring.priority, recurring.tags, recurring.recurrence);
                 tryCompare(editor, "opened", true);
                 selectProject(findChild(appWindow, "editRecurrence"), 0);
                 mouseClick(findChild(appWindow, "saveEditButton"));
                 tryCompare(editor, "visible", false);
-                tryVerify(function () { return tasks.itemAtIndex(0) !== null; });
+                tryVerify(function () {
+                    return tasks.itemAtIndex(0) !== null;
+                });
                 compare(tasks.itemAtIndex(0).recurrence, "none");
 
                 mouseClick(findChild(appWindow, "todayViewButton"));
@@ -199,9 +205,7 @@ Item {
                 compare(tasks.itemAtIndex(0).taskId, id);
                 compare(tasks.itemAtIndex(0).projectName, "Planning");
                 compare(tasks.itemAtIndex(0).listName, "Milestones");
-                tryVerify(function () {
-                    return !findChild(tasks.itemAtIndex(0), "up_" + id).visible;
-                });
+                verify(findChild(tasks.itemAtIndex(0), "menu_" + id) !== null);
                 waitForRendering(appWindow.contentItem);
                 grabImage(appWindow.contentItem).save("ui-planning.png");
 
@@ -233,7 +237,7 @@ Item {
             function test_projectSettingsListsOrderAndArchive() {
                 appWindow.requestActivate();
                 tryCompare(appWindow, "active", true);
-                mouseClick(findChild(appWindow, "newProjectButton"));
+                mouseClick(findChild(appWindow, "sidebarNewProjectButton"));
                 const projectDialog = findChild(appWindow, "projectDialog");
                 tryCompare(projectDialog, "opened", true);
                 findChild(appWindow, "projectName").text = "Managed";
@@ -242,11 +246,11 @@ Item {
                 const projectId = taskModel.projectId;
                 verify(projectId.length > 0);
 
-                mouseClick(findChild(appWindow, "projectSettingsButton"));
                 const settings = findChild(appWindow, "manageProjectDialog");
+                settings.showSettings();
                 tryCompare(settings, "opened", true);
                 findChild(appWindow, "managedName").text = "Managed project";
-                findChild(appWindow, "managedColor").text = "#663399";
+                findChild(appWindow, "managedColor").selectedColor = "#663399";
                 mouseClick(findChild(appWindow, "saveProjectButton"));
                 tryCompare(settings, "visible", false);
                 compare(taskModel.projectInfo.name, "Managed project");
@@ -261,7 +265,7 @@ Item {
                 verify(taskModel.listFilter !== "*");
                 verify(taskModel.listFilter.length > 0);
                 const listId = taskModel.listFilter;
-                mouseClick(findChild(appWindow, "renameListButton"));
+                listDialog.showList(true);
                 tryCompare(listDialog, "opened", true);
                 findChild(appWindow, "listName").text = "Ready";
                 mouseClick(findChild(appWindow, "saveListButton"));
@@ -281,7 +285,7 @@ Item {
                 });
                 compare(tasks.itemAtIndex(0).title, "Second");
                 const secondId = tasks.itemAtIndex(0).taskId;
-                mouseClick(findChild(tasks.itemAtIndex(0), "down_" + secondId));
+                verify(taskModel.moveTask(secondId, "down"));
                 tryVerify(function () {
                     return tasks.itemAtIndex(0) !== null && tasks.itemAtIndex(0).title === "First";
                 });
@@ -289,18 +293,17 @@ Item {
                 compare(tasks.itemAtIndex(0).listId, listId);
                 grabImage(appWindow.contentItem).save("ui-managed-project.png");
 
-                mouseClick(findChild(appWindow, "archiveProjectButton"));
+                verify(taskModel.archiveProject(true));
                 tryCompare(taskModel, "projectId", "");
                 verify(appWindow.projectIndex(projectId) < 0);
                 const archivedToggle = findChild(appWindow, "showArchived");
                 mouseClick(archivedToggle);
                 tryCompare(taskModel, "showArchived", true);
-                const selector = findChild(appWindow, "projectSelector");
-                selectProject(selector, appWindow.projectIndex(projectId));
+                taskModel.projectId = projectId;
                 tryCompare(taskModel, "projectId", projectId);
                 verify(taskModel.projectInfo.archived);
                 verify(!add.enabled);
-                mouseClick(findChild(appWindow, "archiveProjectButton"));
+                verify(taskModel.archiveProject(false));
                 tryCompare(taskModel.projectInfo, "archived", false);
                 verify(add.enabled);
             }
@@ -316,11 +319,10 @@ Item {
                 verify(taskModel.addProject("Order three"));
                 const movedProject = taskModel.projectId;
                 const originalProjectIndex = appWindow.projectIndex(movedProject);
-                mouseClick(findChild(appWindow, "projectUpButton"));
-                mouseClick(findChild(appWindow, "projectUpButton"));
-                compare(appWindow.projectIndex(movedProject), originalProjectIndex - 2);
-                compare(taskModel.projects[appWindow.projectIndex(movedProject) + 1].id, firstProject);
-                compare(taskModel.projects[appWindow.projectIndex(movedProject) + 2].id, secondProject);
+                verify(taskModel.moveProject("up"));
+                compare(appWindow.projectIndex(movedProject), originalProjectIndex - 1);
+                compare(taskModel.projects[appWindow.projectIndex(movedProject) - 1].id, firstProject);
+                compare(taskModel.projects[appWindow.projectIndex(movedProject) + 1].id, secondProject);
 
                 verify(taskModel.addList("Order list one"));
                 const firstList = taskModel.listFilter;
@@ -328,8 +330,8 @@ Item {
                 const secondList = taskModel.listFilter;
                 verify(taskModel.addList("Order list three"));
                 const movedList = taskModel.listFilter;
-                mouseClick(findChild(appWindow, "listUpButton"));
-                mouseClick(findChild(appWindow, "listUpButton"));
+                verify(taskModel.moveList("up"));
+                verify(taskModel.moveList("up"));
                 const orderedLists = taskModel.listsFor(movedProject);
                 compare(orderedLists[1].id, movedList);
                 compare(orderedLists[2].id, firstList);
@@ -344,16 +346,15 @@ Item {
                     return tasks.itemAtIndex(0) !== null;
                 });
                 const id = tasks.itemAtIndex(0).taskId;
-                mouseClick(findChild(tasks.itemAtIndex(0), "archive_" + id));
+                verify(taskModel.archiveTask(id, true));
                 tryCompare(taskModel, "count", 0);
-                mouseClick(findChild(appWindow, "archivedTasksButton"));
+                taskModel.filter = "archived";
                 tryCompare(taskModel, "filter", "archived");
                 tryCompare(taskModel, "count", 1);
                 tryVerify(function () {
                     return tasks.itemAtIndex(0) !== null && tasks.itemAtIndex(0).archived;
                 });
                 verify(!findChild(tasks.itemAtIndex(0), "complete_" + id).visible);
-                verify(!findChild(tasks.itemAtIndex(0), "edit_" + id).visible);
                 waitForRendering(appWindow.contentItem);
                 grabImage(appWindow.contentItem).save("ui-archive-order.png");
 
@@ -363,7 +364,7 @@ Item {
                 tryVerify(function () {
                     return tasks.itemAtIndex(0) !== null && tasks.itemAtIndex(0).archived;
                 });
-                mouseClick(findChild(tasks.itemAtIndex(0), "archive_" + id));
+                verify(taskModel.archiveTask(id, false));
                 tryVerify(function () {
                     return tasks.itemAtIndex(0) !== null && !tasks.itemAtIndex(0).archived;
                 });
@@ -379,31 +380,28 @@ Item {
                 taskModel.view = "project";
                 verify(taskModel.addProject("Tags project"));
 
-                const newTag = findChild(appWindow, "newTagButton");
-                mouseClick(newTag);
                 const dialog = findChild(appWindow, "tagDialog");
+                dialog.showTag("");
                 tryCompare(dialog, "opened", true);
                 findChild(appWindow, "tagName").text = "Work";
-                findChild(appWindow, "tagColor").text = "#A1B2C3";
+                findChild(appWindow, "tagColor").selectedColor = "#A1B2C3";
                 mouseClick(findChild(appWindow, "saveTagButton"));
                 tryCompare(dialog, "visible", false);
                 const workId = taskModel.tagFilter;
                 compare(taskModel.tags.length, 1);
                 compare(taskModel.tags[0].color, "#a1b2c3");
 
-                mouseClick(newTag);
+                dialog.showTag("");
                 tryCompare(dialog, "opened", true);
                 findChild(appWindow, "tagName").text = "Urgent";
-                findChild(appWindow, "tagColor").text = "#AA2727";
+                findChild(appWindow, "tagColor").selectedColor = "#AA2727";
                 mouseClick(findChild(appWindow, "saveTagButton"));
                 tryCompare(dialog, "visible", false);
                 const urgentId = taskModel.tagFilter;
                 compare(taskModel.tags.length, 2);
 
-                const selector = findChild(appWindow, "tagSelector");
                 taskModel.tagFilter = "*";
                 tryCompare(taskModel, "tagFilter", "*");
-                tryCompare(selector, "currentIndex", 0);
                 findChild(appWindow, "titleInput").text = "Tagged visual workflow";
                 mouseClick(findChild(appWindow, "addButton"));
                 tryCompare(taskModel, "count", 1);
@@ -412,8 +410,9 @@ Item {
                     return tasks.itemAtIndex(0) !== null;
                 });
                 const taskId = tasks.itemAtIndex(0).taskId;
-                mouseClick(findChild(tasks.itemAtIndex(0), "edit_" + taskId));
                 const editor = findChild(appWindow, "taskEditor");
+                const tagged = tasks.itemAtIndex(0);
+                editor.editTask(taskId, tagged.title, tagged.note, tagged.projectId, tagged.listId, tagged.scheduledDate, tagged.dueDate, tagged.priority, tagged.tags, tagged.recurrence);
                 tryCompare(editor, "opened", true);
                 waitForRendering(editor.contentItem);
                 let workCheck = null;
@@ -435,19 +434,19 @@ Item {
                 compare(tasks.itemAtIndex(0).scheduledDate, "");
                 compare(tasks.itemAtIndex(0).dueDate, "");
 
-                selectProject(selector, appWindow.choiceIndex(selector.model, workId));
+                taskModel.tagFilter = workId;
                 tryCompare(taskModel, "tagFilter", workId);
                 tryCompare(taskModel, "count", 1);
-                mouseClick(findChild(appWindow, "editTagButton"));
+                dialog.showTag(workId);
                 tryCompare(dialog, "opened", true);
                 findChild(appWindow, "tagName").text = "Focus";
-                findChild(appWindow, "tagColor").text = "#334455";
+                findChild(appWindow, "tagColor").selectedColor = "#334455";
                 mouseClick(findChild(appWindow, "saveTagButton"));
                 tryCompare(dialog, "visible", false);
                 tryVerify(function () {
                     return tasks.itemAtIndex(0) !== null && tasks.itemAtIndex(0).tags[0].name === "Focus";
                 });
-                compare(selector.currentText, "Focus");
+                compare(findChild(appWindow, "tagFilterButton").text, "Focus");
                 waitForRendering(appWindow.contentItem);
                 grabImage(appWindow.contentItem).save("ui-tags.png");
 
@@ -463,7 +462,7 @@ Item {
                 appWindow.requestActivate();
                 tryCompare(appWindow, "active", true);
                 taskModel.view = "project";
-                mouseClick(findChild(appWindow, "newProjectButton"));
+                mouseClick(findChild(appWindow, "sidebarNewProjectButton"));
                 const projectDialog = findChild(appWindow, "projectDialog");
                 tryCompare(projectDialog, "opened", true);
                 findChild(appWindow, "projectName").text = "Default UI";
@@ -472,9 +471,7 @@ Item {
                 mouseClick(findChild(appWindow, "applicationSettingsButton"));
                 const dialog = findChild(appWindow, "applicationSettings");
                 tryCompare(dialog, "opened", true);
-                const defaultProject = findChild(appWindow, "defaultProjectSetting");
-                defaultProject.currentIndex = 0;
-                dialog.defaultProjectIdChoice = "";
+                verify(findChild(appWindow, "defaultProjectSetting") === null);
                 mouseClick(findChild(appWindow, "notificationsEnabledSetting"));
                 findChild(appWindow, "notificationDaysSetting").value = 3;
                 mouseClick(findChild(appWindow, "dmsShowNextSetting"));

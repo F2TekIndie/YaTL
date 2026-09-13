@@ -54,7 +54,7 @@ Row {
                 Label {
                     Layout.fillWidth: true
                     text: Qt.formatDate(dateField.displayMonth, "MMMM yyyy")
-                    color: AppTheme.onSurface
+                    color: AppTheme.foreground
                     horizontalAlignment: Text.AlignHCenter
                 }
                 AppIconButton {
