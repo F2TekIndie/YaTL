@@ -19,9 +19,9 @@ class CliTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.db = str(Path(self.tmp.name) / "tasks.sqlite3")
 
-    def run_cli(self, *args, code=0):
+    def run_cli(self, *args, code=0, env=None):
         result = subprocess.run([BINARY, "--database", self.db, *args],
-                                capture_output=True, text=True, timeout=15)
+                                capture_output=True, text=True, timeout=15, env=env)
         self.assertEqual(result.returncode, code, result.stderr)
         self.assertEqual(result.stderr if code == 0 else result.stdout, "")
         return json.loads(result.stdout if code == 0 else result.stderr)
@@ -270,6 +270,78 @@ class CliTest(unittest.TestCase):
                      f'{home["id"]},{home["id"]}', code=1)
         self.run_cli("list", "--tag", "999", code=1)
         self.run_cli("tag-add", "Missing color", code=2)
+
+    def test_recurrence_and_notification_process_loop(self):
+        today = date.today()
+        tomorrow = (today + timedelta(days=1)).isoformat()
+        task = self.run_cli("add", "Daily review", "--scheduled", today.isoformat(),
+                            "--recurrence", "daily")["task"]
+        self.assertEqual(task["recurrence"], "daily")
+        self.assertTrue(self.run_cli("complete", task["id"])["changed"])
+        successor = self.run_cli("list")["tasks"][0]
+        self.assertEqual(successor["scheduled_date"], tomorrow)
+        self.assertEqual(successor["recurrence_source_id"], task["id"])
+        self.run_cli("edit", successor["id"], "Daily review", "--project", "inbox",
+                     "--note", "preserved recurrence")
+        self.assertEqual(self.run_cli("list")["tasks"][0]["recurrence"], "daily")
+        self.run_cli("add", "Missing date", "--recurrence", "weekly", code=1)
+        self.run_cli("add", "Bad pattern", "--due", today.isoformat(),
+                     "--recurrence", "yearly", code=1)
+
+        notifier = Path(self.tmp.name) / "notify"
+        notify_log = Path(self.tmp.name) / "notify.log"
+        notifier.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$YATL_NOTIFY_LOG\"\n")
+        notifier.chmod(0o755)
+        self.run_cli("add", "Due notification", "--due", today.isoformat())
+        notify_env = {**os.environ, "YATL_NOTIFY_EXECUTABLE": str(notifier),
+                      "YATL_NOTIFY_LOG": str(notify_log)}
+        result = self.run_cli("notify", env=notify_env)
+        self.assertEqual(result, {"attempted": 1, "sent": 1, "failed": 0})
+        self.assertIn("Due notification", notify_log.read_text())
+        self.assertEqual(self.run_cli("notify", env=notify_env),
+                         {"attempted": 0, "sent": 0, "failed": 0})
+
+    def test_settings_default_capture_and_notification_timing(self):
+        defaults = self.run_cli("settings")["settings"]
+        self.assertIsNone(defaults["default_project_id"])
+        self.assertTrue(defaults["notifications_enabled"])
+        self.assertEqual(defaults["notification_days_before"], 0)
+        self.assertTrue(defaults["dms_show_next_task"])
+        self.assertFalse(defaults["dms_use_default_project"])
+
+        project = self.run_cli("project-add", "Default capture")["project"]
+        changed = self.run_cli("settings-set", "--default-project", project["id"],
+                               "--notifications", "off", "--notification-days", "3",
+                               "--dms-next", "off", "--dms-capture", "default")["settings"]
+        self.assertEqual(changed["default_project_id"], project["id"])
+        self.assertFalse(changed["notifications_enabled"])
+        self.assertEqual(changed["notification_days_before"], 3)
+        self.assertFalse(changed["dms_show_next_task"])
+        self.assertTrue(changed["dms_use_default_project"])
+        task = self.run_cli("add", "DMS default", "--use-default")["task"]
+        self.assertEqual(task["project_id"], project["id"])
+        self.run_cli("add", "Explicit inbox", "--project", "inbox")
+        self.run_cli("add", "Conflicting", "--project", "inbox", "--use-default", code=2)
+        self.run_cli("settings-set", "--notification-days", "31", code=1)
+        self.run_cli("settings-set", "--notifications", "maybe", code=1)
+        self.run_cli("settings-set", code=2)
+
+    def test_export_round_trip_payload(self):
+        project = self.run_cli("project-add", "Export project")["project"]
+        task_list = self.run_cli("list-add", project["id"], "Milestones")["list"]
+        tag = self.run_cli("tag-add", "Export", "--color", "#123456")["tag"]
+        task = self.run_cli("add", "Export task", "--project", project["id"],
+                            "--list", task_list["id"], "--tags", tag["id"])["task"]
+        exported = self.run_cli("export")
+        self.assertEqual(exported["format"], "yatl-export-v1")
+        self.assertEqual(exported["schema_version"], 9)
+        self.assertEqual(exported["projects"][0]["id"], project["id"])
+        self.assertEqual(exported["lists"][0]["id"], task_list["id"])
+        self.assertEqual(exported["tasks"][0]["id"], task["id"])
+        path = Path(self.tmp.name) / "export.json"
+        result = self.run_cli("export", "--output", str(path))
+        self.assertEqual(result["format"], "yatl-export-v1")
+        self.assertEqual(json.loads(path.read_text())["tasks"][0]["title"], "Export task")
 
 
 if __name__ == "__main__":

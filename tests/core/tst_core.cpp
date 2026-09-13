@@ -1,4 +1,10 @@
 #include "taskmodel.h"
+#include "notificationservice.h"
+#include "dmsthemeprovider.h"
+#include <QFile>
+#include <QDir>
+#include <QSaveFile>
+#include <QSignalSpy>
 #include <QSqlQuery>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -6,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QUuid>
 #include <QtTest>
+#include <algorithm>
 #include <stdexcept>
 
 class CoreTest : public QObject {
@@ -60,6 +67,21 @@ private:
         sql(path, "UPDATE task_lists SET sort_order=CASE id WHEN 6 THEN 0 ELSE 1 END");
         sql(path, "ALTER TABLE tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
         sql(path, "PRAGMA user_version=6");
+    }
+    static void seedV7(const QString &path) {
+        seedV6(path);
+        sql(path, "CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL COLLATE NOCASE UNIQUE,color TEXT NOT NULL)");
+        sql(path, "CREATE TABLE task_tags (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,PRIMARY KEY(task_id,tag_id))");
+        sql(path, "CREATE INDEX task_tags_tag ON task_tags(tag_id,task_id)");
+        sql(path, "PRAGMA user_version=7");
+    }
+    static void seedV8(const QString &path) {
+        seedV7(path);
+        sql(path, "ALTER TABLE tasks ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'");
+        sql(path, "ALTER TABLE tasks ADD COLUMN recurrence_source_id INTEGER REFERENCES tasks(id)");
+        sql(path, "CREATE UNIQUE INDEX tasks_recurrence_source ON tasks(recurrence_source_id) WHERE recurrence_source_id IS NOT NULL");
+        sql(path, "CREATE TABLE task_notifications (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,date TEXT NOT NULL,notified_at TEXT NOT NULL,PRIMARY KEY(task_id,kind,date))");
+        sql(path, "PRAGMA user_version=8");
     }
     static QVariant sql(const QString &path, const QString &statement) {
         const QString name = QUuid::createUuid().toString();
@@ -651,6 +673,171 @@ private slots:
         QCOMPARE(sql(broken, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tags'").toInt(), 0);
         QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('task_tags') WHERE name='marker'").toInt(), 1);
         QCOMPARE(sql(broken, "SELECT count(*) FROM tasks").toInt(), 2);
+    }
+    void recurrenceGeneratesOneCompleteSuccessor() {
+        TaskStore store(":memory:");
+        const auto project = store.addProject("Routine");
+        const auto list = store.addList(project.id, "Cadence");
+        const auto tag = store.addTag("Home", "#123456");
+        struct Case { QString recurrence; QString date; QString next; };
+        const QVector<Case> cases{{"daily","2027-01-05","2027-01-06"},
+                                  {"weekdays","2027-01-08","2027-01-11"},
+                                  {"weekly","2027-01-05","2027-01-12"},
+                                  {"monthly","2027-01-31","2027-02-28"}};
+        for (const auto &test : cases) {
+            const auto original = store.add(test.recurrence, project.id, list.id,
+                                            test.date, test.date, 3, {tag.id}, test.recurrence);
+            QVERIFY(store.edit(original.id, original.title, "copied note", project.id, list.id,
+                               test.date, test.date, 3, {tag.id}, test.recurrence));
+            QVERIFY(store.complete(original.id));
+            const auto open = store.tasks("open", project.id);
+            const auto found = std::find_if(open.cbegin(), open.cend(), [&](const Task &task) {
+                return task.recurrenceSourceId == original.id;
+            });
+            QVERIFY(found != open.cend());
+            const auto successor = *found;
+            QCOMPARE(successor.scheduledDate, test.next);
+            QCOMPARE(successor.dueDate, test.next);
+            QCOMPARE(successor.recurrence, test.recurrence);
+            QCOMPARE(successor.note, "copied note");
+            QCOMPARE(successor.listId, list.id);
+            QCOMPARE(successor.priority, 3);
+            QCOMPARE(successor.tags.first().id, tag.id);
+            QVERIFY(!store.complete(original.id));
+            QVERIFY(store.reopen(original.id));
+            QVERIFY(store.complete(original.id));
+            const auto after = store.tasks("open", project.id);
+            QCOMPARE(std::count_if(after.cbegin(), after.cend(),
+                                   [&](const Task &task) { return task.recurrenceSourceId == original.id; }), 1);
+        }
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("No date", {}, {}, {}, {}, 0, {}, "daily"));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.add("Bad", {}, {}, "2027-01-01", {}, 0, {}, "yearly"));
+    }
+
+    void notificationQueueRetriesAndDeduplicates() {
+        TaskStore store(":memory:");
+        const auto task = store.add("Notify me", {}, {}, "2027-01-02", "2027-01-03");
+        QCOMPARE(store.pendingNotifications("2027-01-03").size(), 1);
+        auto failed = NotificationService::run(store, "2027-01-03", "/bin/false");
+        QCOMPARE(failed.attempted, 1);
+        QCOMPARE(failed.failed, 1);
+        QCOMPARE(store.pendingNotifications("2027-01-03").size(), 1);
+        auto sent = NotificationService::run(store, "2027-01-03", "/bin/true");
+        QCOMPARE(sent.sent, 1);
+        QCOMPARE(store.pendingNotifications("2027-01-03").size(), 0);
+        QCOMPARE(NotificationService::run(store, "2027-01-03", "/bin/true").attempted, 0);
+        store.complete(task.id);
+        QVERIFY(store.pendingNotifications("2027-12-31").isEmpty());
+    }
+
+    void upgradesV7RecurrenceAndNotificationsAndRollsBack() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v7.sqlite3");
+        seedV7(path);
+        {
+            TaskStore store(path);
+            QCOMPARE(store.task("9").recurrence, "none");
+            QVERIFY(store.task("9").recurrenceSourceId.isEmpty());
+            QCOMPARE(store.pendingNotifications("2026-09-13").size(), 1);
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT count(*) FROM task_notifications").toInt(), 0);
+
+        const auto broken = dir.filePath("broken-v7.sqlite3");
+        seedV7(broken);
+        sql(broken, "CREATE TABLE task_notifications(marker INTEGER)");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 7);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='recurrence'").toInt(), 0);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('task_notifications') WHERE name='marker'").toInt(), 1);
+    }
+
+    void settingsPersistValidateAndControlNotifications() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("settings.sqlite3");
+        QString projectId;
+        {
+            TaskStore store(path);
+            const auto defaults = store.settings();
+            QVERIFY(defaults.defaultProjectId.isEmpty());
+            QVERIFY(defaults.notificationsEnabled);
+            QCOMPARE(defaults.notificationDaysBefore, 0);
+            QVERIFY(defaults.dmsShowNextTask);
+            QVERIFY(!defaults.dmsUseDefaultProject);
+            projectId = store.addProject("Default").id;
+            store.saveSettings({projectId, false, 5, false, true});
+            store.add("Future", projectId, {}, QDate::currentDate().addDays(5).toString(Qt::ISODate));
+            QCOMPARE(NotificationService::run(store, {}, "/bin/true").attempted, 0);
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+                                     store.saveSettings({projectId, true, 31, true, false}));
+        }
+        {
+            TaskStore store(path);
+            const auto settings = store.settings();
+            QCOMPARE(settings.defaultProjectId, projectId);
+            QCOMPARE(settings.notificationDaysBefore, 5);
+            QVERIFY(!settings.notificationsEnabled);
+            QVERIFY(!settings.dmsShowNextTask);
+            QVERIFY(settings.dmsUseDefaultProject);
+            auto enabled = settings;
+            enabled.notificationsEnabled = true;
+            store.saveSettings(enabled);
+            QCOMPARE(NotificationService::run(store, {}, "/bin/true").sent, 1);
+            QVERIFY(store.archiveProject(projectId, true));
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error, store.saveSettings(enabled));
+        }
+    }
+
+    void upgradesV8SettingsAndRollsBack() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v8.sqlite3");
+        seedV8(path);
+        {
+            TaskStore store(path);
+            QVERIFY(store.settings().notificationsEnabled);
+            QCOMPARE(store.task("9").title, "Newer");
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT count(*) FROM settings").toInt(), 5);
+
+        const auto broken = dir.filePath("broken-v8.sqlite3");
+        seedV8(broken);
+        sql(broken, "CREATE TABLE settings(marker INTEGER)");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 8);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('settings') WHERE name='marker'").toInt(), 1);
+    }
+
+    void dmsThemeModesFallbackAndAtomicReplacement() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        qputenv("XDG_CACHE_HOME", dir.path().toUtf8());
+        const auto themeDir = dir.filePath("DankMaterialShell");
+        QVERIFY(QDir().mkpath(themeDir));
+        const auto path = themeDir + "/dms-colors.json";
+        {
+            QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("{\"mode\":\"light\",\"light\":{\"primary\":\"#112233\",\"onSurface\":\"#ffffff\"},\"dark\":{\"primary\":\"#aabbcc\"}}");
+        }
+        DmsThemeProvider provider;
+        QCOMPARE(provider.primary(), "#112233");
+        QCOMPARE(provider.onSurface(), "#ffffff");
+        QSignalSpy changed(&provider, &DmsThemeProvider::themeChanged);
+        QSaveFile replacement(path);
+        QVERIFY(replacement.open(QIODevice::WriteOnly));
+        replacement.write("{\"mode\":\"dark\",\"light\":{\"primary\":\"#112233\"},\"dark\":{\"primary\":\"#aabbcc\"}}");
+        QVERIFY(replacement.commit());
+        QTRY_VERIFY_WITH_TIMEOUT(changed.count() > 0, 1000);
+        QCOMPARE(provider.primary(), "#aabbcc");
+        QFile malformed(path); QVERIFY(malformed.open(QIODevice::WriteOnly)); malformed.write("not json"); malformed.close();
+        const auto signalCount = changed.count();
+        QTRY_VERIFY_WITH_TIMEOUT(changed.count() > signalCount, 1000);
+        QVERIFY(provider.primary() != "#aabbcc");
+        QFile::remove(path);
+        QVERIFY(QDir(themeDir).removeRecursively());
+        DmsThemeProvider absent;
+        QVERIFY(!absent.background().isEmpty());
+        qunsetenv("XDG_CACHE_HOME");
     }
 };
 QTEST_GUILESS_MAIN(CoreTest)

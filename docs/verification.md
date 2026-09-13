@@ -5,9 +5,9 @@ is not ready to hand back. The script performs an incremental build and runs:
 
 | Layer | Checks |
 | --- | --- |
-| Qt Test | Capture/completion/archive across store restarts; title/ID/planning/tag validation; Today/Upcoming boundaries; literal and tag-aware search; populated version-1 through version-6 migrations; project/list/task archive and ordering persistence; mutation guards; newer-version refusal; migration and write rollback; external connection refresh |
-| CLI integration | Real-process capture/list/complete/history; machine-readable errors; parallel first launch and writes; XDG default path; project/task archive and restore, project/list/task ordering, editing, reopening, planning views, tags, and search |
-| Qt Quick Test | Real QML screen; capture and planning validation; completion/reopening; project/task archive and restore; project/list/tag create, edit, filter, assignment, and ordering controls; task editing; Today/Upcoming/search navigation and contextual results |
+| Qt Test | Capture/completion/archive across store restarts; title/ID/planning/tag/recurrence validation; Today/Upcoming boundaries; literal and tag-aware search; populated version-1 through version-7 migrations; recurrence generation; notification retry/deduplication; project/list/task archive and ordering persistence; mutation guards; newer-version refusal; migration and write rollback; external connection refresh |
+| CLI integration | Real-process capture/list/complete/history; machine-readable errors; parallel first launch and writes; XDG default path; project/task archive and restore, project/list/task ordering, editing, reopening, planning views, tags, recurrence, notifications, and search |
+| Qt Quick Test | Component gallery plus real QML screen; shared-control states and accessibility; capture and planning validation; completion/reopening; project/task archive and restore; project/list/tag create, edit, filter, assignment, and ordering controls; task editing; Today/Upcoming/search navigation and contextual results |
 | Desktop process | App reuse and view switching; niri focus command; detached main/capture launch; stable desktop IDs; DMS manifest and command boundary |
 | Desktop syntax | DMS QML parsing with the selected Qt toolchain and `niri validate` on the packaged fragment |
 
@@ -93,6 +93,45 @@ floating mode, and verified it on the second connected output. The niri rule
 fragment itself remains opt-in as required, so the smoke test did not edit or
 reload the user's active compositor configuration.
 
+Iteration 9 automated verification (0.9.0): all **29 domain/model tests, 14 CLI
+integration tests, 4 desktop-process/contract tests, and 8 QML workflows** are
+implemented; core and CLI passed locally,
+plus Qt setup/cleanup checks. Coverage includes all four recurrence patterns,
+weekend and month boundaries, copied task metadata and tags, idempotent generation,
+validation, notification failure retry and successful-send deduplication, CLI
+notifier invocation, recurrence editing, populated schema-7 migration, and full
+migration rollback, settings persistence and validation, configured default capture,
+and settings migration rollback. DMS QML formatting and the staged build passed;
+the full desktop/QML verification command was blocked by the environment's
+restricted display/socket access.
+
+Visual foundation verification (plan steps 1–3): the rebuilt core suite has **30
+passing tests**, including DMS light/dark selection, malformed and absent cache
+fallbacks, and atomic replacement. The component-gallery Qt Quick Test has **5
+passing tests** covering the shared QML module, live semantic theme binding, and
+reference-size captures; the CLI process suite has **15 passing tests**. Full desktop/QML verification
+still depends on a session that permits the activation socket and display.
+
+Shell/context verification (plan steps 4–6): Main and Quick Capture load with
+semantic palette bindings, the sidebar navigation, contextual project controls,
+and shared input/button components. The component gallery and Quick Capture
+workflow pass; the full workflow suite now passes all 9 scenarios, including list
+ordering and debounced tag search.
+
+Capture/task-card/color verification (plan steps 7–9): capture has a reusable
+themed field, destination hint, and cross-view `Ctrl+N` routing. Task rows use
+semantic cards and expose overflow menus for secondary actions. User project/tag
+colors are rendered only as indicators, borders, or translucent surfaces while
+text uses theme foreground roles.
+
+Finalization verification: structured editor sections and popup calendar fields
+load in the QML workflow, model refreshes avoid unchanged row resets, and the
+CLI export test passes with both stdout and atomic file output. Gallery reference
+screenshots are generated at 640×500, 880×620, and 1280×800. The staged Linux
+archive and checksum are present under `distribution/artifacts/yatl-final/`.
+Malformed or removed DMS cache data now restores the palette-derived fallback;
+ordinary controls expose primary, tonal, text, and destructive variants.
+
 1. Start `build/bin/yatl --database /tmp/yatl-manual/tasks.sqlite3`.
 2. Submit an empty title. Verify that a useful error appears and capture remains
    usable. Enter a task and press Enter. Verify it appears and the input clears.
@@ -126,6 +165,11 @@ reload the user's active compositor configuration.
 11. Copy the packaged DMS plugin to the user plugin directory, scan and enable it,
     and add YaTL to DankBar. Confirm the pill summary updates, the popout captures
     and completes tasks, and Open Today and Quick capture reuse their windows.
+12. Give a dated task each recurrence pattern and complete it. Confirm one successor
+    appears with the expected date and copied details. Restart, reopen, and complete
+    the prior occurrence again; confirm no duplicate successor is created.
+13. Run `yatlctl notify` with a due task. Confirm one desktop notification appears,
+    the JSON reports one successful send, and a second run reports no pending send.
 
 For feedback, record the command, observed result, expected result, and any
 terminal/QML diagnostics. Extend the automated coverage when a defect is fixed.

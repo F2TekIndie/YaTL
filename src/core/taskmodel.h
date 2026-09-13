@@ -13,17 +13,19 @@ class TaskModel : public QAbstractListModel {
     Q_PROPERTY(QVariantList projects READ projects NOTIFY projectsChanged)
     Q_PROPERTY(bool showArchived READ showArchived WRITE setShowArchived NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap projectInfo READ projectInfo NOTIFY stateChanged)
-    Q_PROPERTY(QString listFilter READ listFilter WRITE setListFilter NOTIFY stateChanged)
+    Q_PROPERTY(QString listFilter READ listFilter WRITE setListFilter NOTIFY listFilterChanged)
     Q_PROPERTY(QVariantList taskLists READ taskLists NOTIFY stateChanged)
     Q_PROPERTY(QString view READ view WRITE setView NOTIFY stateChanged)
     Q_PROPERTY(QString searchText READ searchText WRITE setSearchText NOTIFY stateChanged)
     Q_PROPERTY(QVariantList tags READ tags NOTIFY stateChanged)
-    Q_PROPERTY(QString tagFilter READ tagFilter WRITE setTagFilter NOTIFY stateChanged)
+    Q_PROPERTY(QString tagFilter READ tagFilter WRITE setTagFilter NOTIFY tagFilterChanged)
+    Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
 public:
     enum Role {
         IdRole = Qt::UserRole + 1, TitleRole, CompletedRole, CompletedAtRole,
         ProjectRole, NoteRole, ListRole, ScheduledRole, DueRole, PriorityRole,
-        ProjectNameRole, ListNameRole, ArchivedRole, TagsRole
+        ProjectNameRole, ListNameRole, ArchivedRole, TagsRole, RecurrenceRole,
+        RecurrenceSourceRole
     };
     explicit TaskModel(TaskStore &store, QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
@@ -42,6 +44,7 @@ public:
     QString searchText() const { return searchText_; }
     QVariantList tags() const { return tags_; }
     QString tagFilter() const { return tagFilter_; }
+    QVariantMap settings() const { return settings_; }
     Q_INVOKABLE QVariantList listsFor(const QString &projectId) const;
     Q_INVOKABLE QVariantMap get(int row) const;
     void setShowArchived(bool show);
@@ -59,7 +62,7 @@ public:
     Q_INVOKABLE bool edit(const QString &id, const QString &title, const QString &note,
                           const QString &projectId, const QString &listId,
                           const QString &scheduledDate, const QString &dueDate, int priority,
-                          const QStringList &tagIds);
+                          const QStringList &tagIds, const QString &recurrence);
     Q_INVOKABLE bool addTag(const QString &name, const QString &color);
     Q_INVOKABLE bool editTag(const QString &id, const QString &name, const QString &color);
     Q_INVOKABLE bool editProject(const QString &name, const QString &color);
@@ -70,6 +73,10 @@ public:
     Q_INVOKABLE bool moveList(const QString &direction);
     Q_INVOKABLE bool moveTask(const QString &id, const QString &direction);
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void clearError() { setError({}); }
+    Q_INVOKABLE bool saveSettings(const QString &defaultProjectId, bool notificationsEnabled,
+                                  int notificationDaysBefore, bool dmsShowNextTask,
+                                  bool dmsUseDefaultProject);
 signals:
     void stateChanged();
     void filterChanged();
@@ -77,8 +84,12 @@ signals:
     void countChanged();
     void projectIdChanged();
     void projectsChanged();
+    void settingsChanged();
+    void listFilterChanged();
+    void tagFilterChanged();
 private:
     void setError(const QString &error);
+    void refreshTaskRows();
     TaskStore &store_;
     QVector<Task> tasks_;
     QString filter_ = "open";
@@ -87,11 +98,13 @@ private:
     QVariantList projects_;
     QVariantList taskLists_;
     QVariantList tags_;
+    QVariantMap settings_;
     QString listFilter_ = "*";
     bool showArchived_ = false;
     QString view_ = "project";
     QString searchText_;
     QString tagFilter_ = "*";
     QTimer timer_;
+    QTimer searchDebounce_;
     int dataVersion_ = 0;
 };

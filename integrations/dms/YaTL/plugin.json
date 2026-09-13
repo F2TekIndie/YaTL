@@ -3,7 +3,7 @@
   "id": "yatl",
   "name": "YaTL",
   "description": "Today summary and quick task actions for YaTL",
-  "version": "0.7.0",
+  "version": "0.9.0",
   "author": "YaTL",
   "type": "widget",
   "capabilities": ["dankbar-widget", "task-management"],

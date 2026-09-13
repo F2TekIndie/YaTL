@@ -27,6 +27,8 @@ struct Task {
     QString listName;
     bool archived = false;
     QVector<Tag> tags;
+    QString recurrence = "none";
+    QString recurrenceSourceId;
     bool completed() const { return !completedAt.isEmpty(); }
 };
 
@@ -45,9 +47,24 @@ struct TaskList {
     qint64 sortOrder = 0;
 };
 
+struct TaskNotification {
+    QString taskId;
+    QString title;
+    QString kind;
+    QString date;
+};
+
+struct Settings {
+    QString defaultProjectId;
+    bool notificationsEnabled = true;
+    int notificationDaysBefore = 0;
+    bool dmsShowNextTask = true;
+    bool dmsUseDefaultProject = false;
+};
+
 class TaskStore {
 public:
-    static constexpr int SchemaVersion = 7;
+    static constexpr int SchemaVersion = 9;
     explicit TaskStore(const QString &path);
     ~TaskStore();
     TaskStore(const TaskStore &) = delete;
@@ -69,10 +86,11 @@ public:
     bool moveTask(const QString &id, const QString &direction, const QString &listFilter = "*");
     Task add(const QString &title, const QString &projectId = {}, const QString &listId = {},
              const QString &scheduledDate = {}, const QString &dueDate = {}, int priority = 0,
-             const QStringList &tagIds = {});
+             const QStringList &tagIds = {}, const QString &recurrence = "none");
     bool edit(const QString &id, const QString &title, const QString &note, const QString &projectId,
               const QString &listId = {}, const QString &scheduledDate = {},
-              const QString &dueDate = {}, int priority = 0, const QStringList &tagIds = {});
+              const QString &dueDate = {}, int priority = 0, const QStringList &tagIds = {},
+              const QString &recurrence = "none");
     Task task(const QString &id) const;
     bool complete(const QString &id);
     bool reopen(const QString &id);
@@ -83,6 +101,10 @@ public:
                         const QString &scope = QStringLiteral("project"),
                         const QString &search = {}, const QString &tagId = {}) const;
     int dataVersion() const;
+    QVector<TaskNotification> pendingNotifications(const QString &throughDate) const;
+    bool markNotificationSent(const TaskNotification &notification);
+    Settings settings() const;
+    void saveSettings(const Settings &settings);
 
 private:
     QSqlDatabase db_;
@@ -90,6 +112,8 @@ private:
     void validateProject(const QString &id, bool writable = false) const;
     void validateList(const QString &id, const QString &projectId) const;
     void validatePlanning(const QString &scheduledDate, const QString &dueDate, int priority) const;
+    void validateRecurrence(const QString &recurrence, const QString &scheduledDate,
+                            const QString &dueDate) const;
     QStringList validateTagIds(const QStringList &tagIds) const;
     QVector<Tag> taskTags(const QString &taskId) const;
     void replaceTaskTags(const QString &taskId, const QStringList &tagIds);

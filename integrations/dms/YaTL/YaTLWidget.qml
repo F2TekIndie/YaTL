@@ -13,6 +13,8 @@ PluginComponent {
     property string nextTitle: "No open tasks"
     property var todayTasks: []
     property string errorText: ""
+    property bool showNextTask: true
+    property bool useDefaultProject: false
 
     function parseResult(output, exitCode, kind) {
         if (exitCode !== 0) {
@@ -25,6 +27,9 @@ PluginComponent {
                 openCount = result.open_count || 0
                 todayCount = result.today_count || 0
                 nextTitle = result.next_task ? result.next_task.title : "No open tasks"
+            } else if (kind === "settings") {
+                showNextTask = result.settings ? result.settings.dms_show_next_task : true
+                useDefaultProject = result.settings ? result.settings.dms_use_default_project : false
             } else {
                 todayTasks = result.tasks || []
             }
@@ -41,12 +46,17 @@ PluginComponent {
         Proc.runCommand("yatl.today", ["yatlctl", "today"], function(output, exitCode) {
             root.parseResult(output, exitCode, "today")
         })
+        Proc.runCommand("yatl.settings", ["yatlctl", "settings"], function(output, exitCode) {
+            root.parseResult(output, exitCode, "settings")
+        })
     }
 
     function addTask(title) {
         const cleanTitle = title.trim()
         if (!cleanTitle) return
-        Proc.runCommand("yatl.add", ["yatlctl", "add", cleanTitle], function(output, exitCode) {
+        const command = ["yatlctl", "add", cleanTitle]
+        if (useDefaultProject) command.push("--use-default")
+        Proc.runCommand("yatl.add", command, function(output, exitCode) {
             if (exitCode !== 0) root.errorText = "Could not add task"
             else root.refresh()
         })
@@ -87,6 +97,7 @@ PluginComponent {
             StyledText {
                 width: Math.min(implicitWidth, 180)
                 text: "• " + root.nextTitle
+                visible: root.showNextTask
                 elide: Text.ElideRight
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
@@ -130,7 +141,7 @@ PluginComponent {
                     DankTextField {
                         id: quickAddField
                         width: parent.width - addButton.width - parent.spacing
-                        placeholderText: "Add to Inbox"
+                        placeholderText: root.useDefaultProject ? "Add to default project" : "Add to Inbox"
                         onAccepted: {
                             root.addTask(text)
                             clear()

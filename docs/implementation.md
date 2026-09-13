@@ -136,12 +136,97 @@ It does not claim completion of all milestone 2 or desktop integration features.
   tiled, quick capture floating, focus transfer, and placement on both eDP-1 and
   HDMI-A-1.
 
+## Iteration 8 — recurrence and notification scheduling (0.8.0)
+
+- Tasks support daily, weekdays, weekly, and monthly recurrence when at least one
+  planning date is present. Completion advances both dates, including weekend
+  skipping and Qt calendar month clamping, and transactionally creates one linked
+  successor with copied project, list, note, priority, recurrence, and tags.
+- A unique source link makes generation idempotent across repeated completion and
+  reopen/complete cycles while retaining every completed occurrence in history.
+- The main app checks reminders on startup and every minute. Standard
+  `notify-send` delivery uses the due date when present and scheduled date
+  otherwise; successful sends are recorded and failures remain eligible to retry.
+- `yatlctl notify` runs the same scheduler on demand. `add` and `edit` accept
+  `--recurrence`, and all task JSON includes recurrence and source-link fields.
+- Schema 8 adds recurrence metadata, its uniqueness index, and durable notification
+  delivery records. Populated schema-7 migration and rollback fixtures protect all
+  existing data.
+
+## Iteration 9 — local settings and desktop preferences (0.9.0)
+
+- Schema 9 stores the default capture project, notification enablement and
+  advance window, DMS next-task visibility, and DMS default-project capture choice.
+- The main settings dialog edits and validates these values and includes the
+  packaged niri include and validation instructions.
+- `yatlctl settings` and `settings-set` expose the same preferences for scripts;
+  `add --use-default` and the DMS widget honor the configured capture destination.
+- Notification scheduling applies the configured advance window and can be
+  disabled without deleting delivery history. Migration and rollback fixtures,
+  CLI process tests, core tests, and the QML settings workflow cover the loop.
+
+## Visual foundation — consolidated plan steps 1–3
+
+- `DmsThemeProvider` reads the active semantic palette from
+  `$XDG_CACHE_HOME/DankMaterialShell/dms-colors.json`, watches both the file and
+  its directory for atomic replacement, and falls back to the Qt system palette
+  without writing to DMS state.
+- `AppTheme.qml` exposes the provider's semantic roles and shared spacing,
+  sizing, typography, radius, and animation tokens. It contains no fixed
+  application colors.
+- The reusable DMS-style controls (`AppCard`, `AppButton`, `AppIconButton`,
+  `AppTextField`, `AppComboBox`, `AppSwitch`, `AppSegmentedControl`,
+  `AppDialog`, `AppMenu`, `AppBadge`, `AppNavigationItem`, `AppSectionHeader`,
+  and `AppDateField`) are packaged in the QML module and exercised by the
+  component-gallery Qt Quick Test. Core coverage includes light/dark mode,
+  malformed and absent cache data, and atomic file replacement.
+
+## Shell and contextual navigation — consolidated plan steps 4–6
+
+- Main and Quick Capture now bind their application palette, surfaces, text,
+  borders, and validation states to `AppTheme` and use the shared controls.
+- Main has a DMS-style sidebar for Today, Upcoming, Search, Inbox, active
+  projects, and New Project, with the existing keyboard and test object names
+  preserved for the transition.
+- Project, list, tag, archive, and task-state controls stay scoped to the
+  selected project page; navigation and search are presented in the page header
+  and project context rather than as global organizational controls.
+
+## Capture, task cards, and safe user colors — consolidated plan steps 7–9
+
+- Capture uses a themed, reusable field and button with a visible destination
+  hint. `Ctrl+N` switches to the project capture surface before focusing the
+  field, so it works from Today, Upcoming, and Search without targeting a
+  hidden control.
+- Task rows use rounded semantic cards, compact completion and ordering
+  controls, metadata hierarchy, and an overflow menu containing Edit, Complete/
+  Reopen, and Archive/Restore actions.
+- Project and tag colors remain user data and are restricted to small indicators,
+  chip borders, and translucent tinted surfaces. Text uses DMS foreground roles
+  for readable contrast in both light and dark modes.
+
+## Finalization — editor, polish, export, and Fedora delivery
+
+- The task editor is structured into Task, Organization, Planning, Tags, and
+  Notes sections. Date fields provide keyboard-editable ISO dates, clear actions,
+  and a popup calendar grid; dialogs use themed surfaces, local validation text,
+  and Escape-to-cancel behavior.
+- Settings, project, tag, list, and project-creation dialogs use section headers
+  and shared controls. Task refreshes compare rows before resetting the model,
+  while search remains debounced and tag loading is batched. Sidebar projects are
+  filtered to avoid duplicating Inbox and are hosted in a scrollable section.
+- `yatlctl export` emits a versioned JSON snapshot of settings, projects, lists,
+  tags, and tasks, either to stdout or an atomically-written output file.
+- `distribution/yatl.spec` provides Fedora RPM metadata and dependencies. The
+  staged tar archive and checksum are produced under `distribution/artifacts/`.
+- Button variants, themed combo/spin boxes, reduced-motion environment handling,
+  and notification exception boundaries complete the interaction polish.
+
 ## Next slices
 
-1. Implement recurrence rules and desktop notification scheduling.
-2. Add settings for the default project, notification timing, and desktop options.
-3. Add data export, Fedora release packaging, fresh-install/upgrade checks, and
-   complete user documentation.
+All planned implementation steps are complete. Remaining acceptance work is
+limited to running the Fedora RPM build after installing Fedora's Qt development
+packages and completing a real-session desktop smoke test.
 
 Every slice should extend the shared C++ rules and the same verification script,
 including migration fixtures whenever the schema changes. Keep earlier tests
@@ -164,8 +249,10 @@ passing. Desktop-specific acceptance remains a real-session smoke test.
 
 Current summary reports all open tasks across Inbox and active projects and
 includes a Today count; the CLI's `today` command returns its detailed rows.
-Recurrence, notifications, settings, and export remain unimplemented. DMS quick
-capture defaults to Inbox until the settings slice. Reopening and archive/restore
+Export is available through `yatlctl export`, with versioned JSON to stdout or
+an atomically-written file. Notifications use the due date (or scheduled date
+when no due date exists), with the configured advance window and enablement.
+Reopening and archive/restore
 are supported; there is no general
 edit-undo or project/list deletion feature. Core task edits replace the full
 editable record; CLI edits preserve omitted planning values. Concurrent edits

@@ -2,6 +2,7 @@
 #include <exception>
 
 TaskModel::TaskModel(TaskStore &store, QObject *parent) : QAbstractListModel(parent), store_(store) {
+    projectId_ = store_.settings().defaultProjectId;
     refresh();
     timer_.setInterval(1000);
     connect(&timer_, &QTimer::timeout, this, [this] {
@@ -9,6 +10,9 @@ TaskModel::TaskModel(TaskStore &store, QObject *parent) : QAbstractListModel(par
         catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); }
     });
     timer_.start();
+    searchDebounce_.setSingleShot(true);
+    searchDebounce_.setInterval(250);
+    connect(&searchDebounce_, &QTimer::timeout, this, &TaskModel::refreshTaskRows);
 }
 int TaskModel::rowCount(const QModelIndex &parent) const { return parent.isValid() ? 0 : tasks_.size(); }
 QVariant TaskModel::data(const QModelIndex &index, int role) const {
@@ -28,6 +32,8 @@ QVariant TaskModel::data(const QModelIndex &index, int role) const {
     case ProjectNameRole: return task.projectName;
     case ListNameRole: return task.listName;
     case ArchivedRole: return task.archived;
+    case RecurrenceRole: return task.recurrence;
+    case RecurrenceSourceRole: return task.recurrenceSourceId;
     case TagsRole: {
         QVariantList tags;
         for (const auto &tag : task.tags)
@@ -53,7 +59,8 @@ QHash<int, QByteArray> TaskModel::roleNames() const {
             {NoteRole, "note"}, {ListRole, "listId"}, {ScheduledRole, "scheduledDate"},
             {DueRole, "dueDate"}, {PriorityRole, "priority"},
             {ProjectNameRole, "projectName"}, {ListNameRole, "listName"},
-            {ArchivedRole, "archived"}, {TagsRole, "tags"}};
+            {ArchivedRole, "archived"}, {TagsRole, "tags"},
+            {RecurrenceRole, "recurrence"}, {RecurrenceSourceRole, "recurrenceSourceId"}};
 }
 void TaskModel::setError(const QString &error) {
     if (error_ == error) return;
@@ -82,8 +89,39 @@ void TaskModel::setView(const QString &view) {
 void TaskModel::setSearchText(const QString &text) {
     if (searchText_ == text) return;
     searchText_ = text;
-    if (view_ == "search") refresh();
+    if (view_ == "search") {
+        // Invalidate the visible result immediately so callers never observe a
+        // previous query's rows while the debounced lookup is pending.
+        if (!tasks_.isEmpty()) {
+            beginResetModel();
+            tasks_.clear();
+            endResetModel();
+            emit countChanged();
+        }
+        searchDebounce_.start();
+        emit stateChanged();
+    }
     else emit stateChanged();
+}
+void TaskModel::refreshTaskRows() {
+    if (view_ != "search") return;
+    try {
+        const auto next = store_.tasks("all", "*", "*", "search", searchText_);
+        bool same = next.size() == tasks_.size();
+        if (same) {
+            for (int i = 0; i < next.size() && same; ++i) {
+                const auto &a = next.at(i); const auto &b = tasks_.at(i);
+                same = a.id == b.id && a.title == b.title && a.note == b.note &&
+                       a.completedAt == b.completedAt && a.projectId == b.projectId &&
+                       a.listId == b.listId && a.archived == b.archived && a.tags.size() == b.tags.size();
+                for (int j = 0; same && j < a.tags.size(); ++j) same = a.tags.at(j).id == b.tags.at(j).id;
+            }
+        }
+        if (same) return;
+        beginResetModel(); tasks_ = next; endResetModel();
+        dataVersion_ = store_.dataVersion();
+        emit countChanged();
+    } catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); }
 }
 void TaskModel::setTagFilter(const QString &id) {
     if (tagFilter_ == id) return;
@@ -92,6 +130,7 @@ void TaskModel::setTagFilter(const QString &id) {
         if (tag.toMap().value("id").toString() == id) found = true;
     if (!found) { setError("Tag not found."); return; }
     tagFilter_ = id;
+    emit tagFilterChanged();
     refresh();
 }
 void TaskModel::refresh() {
@@ -111,7 +150,11 @@ void TaskModel::refresh() {
         }
         bool found = false;
         for (const auto &item : projects_) if (item.toMap().value("id").toString() == projectId_) found = true;
-        if (!found) { projectId_.clear(); listFilter_ = "*"; emit projectIdChanged(); }
+        if (!found) {
+            projectId_.clear();
+            if (listFilter_ != "*") { listFilter_ = "*"; emit listFilterChanged(); }
+            emit projectIdChanged();
+        }
         taskLists_.clear();
         for (const auto &project : store_.projects(true))
             for (const auto &list : store_.lists(project.id))
@@ -120,21 +163,56 @@ void TaskModel::refresh() {
         tags_.clear();
         for (const auto &tag : store_.tags())
             tags_.append(QVariantMap{{"id", tag.id}, {"name", tag.name}, {"color", tag.color}});
+        const auto storedSettings = store_.settings();
+        const QVariantMap settings{{"defaultProjectId", storedSettings.defaultProjectId},
+                                   {"notificationsEnabled", storedSettings.notificationsEnabled},
+                                   {"notificationDaysBefore", storedSettings.notificationDaysBefore},
+                                   {"dmsShowNextTask", storedSettings.dmsShowNextTask},
+                                   {"dmsUseDefaultProject", storedSettings.dmsUseDefaultProject}};
+        if (settings_ != settings) { settings_ = settings; emit settingsChanged(); }
         bool tagFound = tagFilter_ == "*";
         for (const auto &tag : tags_)
             if (tag.toMap().value("id").toString() == tagFilter_) tagFound = true;
-        if (!tagFound) tagFilter_ = "*";
+        if (!tagFound && tagFilter_ != "*") { tagFilter_ = "*"; emit tagFilterChanged(); }
         const QString effectiveFilter = view_ == "project" ? filter_ : (view_ == "search" ? "all" : "open");
         auto tasks = store_.tasks(effectiveFilter, projectId_, listFilter_, view_, searchText_,
                                   view_ == "project" ? tagFilter_ : "*");
+        bool rowsChanged = tasks.size() != tasks_.size();
+        for (int i = 0; !rowsChanged && i < tasks.size(); ++i) {
+            const auto &a = tasks.at(i);
+            const auto &b = tasks_.at(i);
+            rowsChanged = a.id != b.id || a.title != b.title || a.completedAt != b.completedAt
+                || a.projectId != b.projectId || a.note != b.note || a.listId != b.listId
+                || a.sortOrder != b.sortOrder || a.scheduledDate != b.scheduledDate
+                || a.dueDate != b.dueDate || a.priority != b.priority || a.archived != b.archived
+                || a.recurrence != b.recurrence || a.recurrenceSourceId != b.recurrenceSourceId
+                || a.tags.size() != b.tags.size();
+            for (int j = 0; !rowsChanged && j < a.tags.size(); ++j)
+                rowsChanged = a.tags.at(j).id != b.tags.at(j).id
+                    || a.tags.at(j).name != b.tags.at(j).name
+                    || a.tags.at(j).color != b.tags.at(j).color;
+        }
+        if (rowsChanged) {
+            beginResetModel();
+            tasks_ = std::move(tasks);
+            endResetModel();
+        }
         emit stateChanged();
-        beginResetModel();
-        tasks_ = std::move(tasks);
-        endResetModel();
         dataVersion_ = version;
-        emit countChanged();
+        if (rowsChanged) emit countChanged();
         setError({});
     } catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); }
+}
+
+bool TaskModel::saveSettings(const QString &defaultProjectId, bool notificationsEnabled,
+                             int notificationDaysBefore, bool dmsShowNextTask,
+                             bool dmsUseDefaultProject) {
+    try {
+        store_.saveSettings({defaultProjectId, notificationsEnabled, notificationDaysBefore,
+                             dmsShowNextTask, dmsUseDefaultProject});
+    } catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    refresh();
+    return true;
 }
 bool TaskModel::add(const QString &title) {
     try { store_.add(title, projectId_, listFilter_ == "*" ? QString() : listFilter_); }
@@ -158,6 +236,7 @@ void TaskModel::setProjectId(const QString &id) {
     if (!found) { setError("Project not found."); return; }
     projectId_ = id;
     listFilter_ = "*";
+    emit listFilterChanged();
     emit projectIdChanged();
     refresh();
 }
@@ -173,15 +252,19 @@ bool TaskModel::addProject(const QString &name) {
 bool TaskModel::edit(const QString &id, const QString &title, const QString &note,
                      const QString &projectId, const QString &listId,
                      const QString &scheduledDate, const QString &dueDate, int priority,
-                     const QStringList &tagIds) {
-    try { store_.edit(id, title, note, projectId, listId, scheduledDate, dueDate, priority, tagIds); }
+                     const QStringList &tagIds, const QString &recurrence) {
+    try { store_.edit(id, title, note, projectId, listId, scheduledDate, dueDate, priority, tagIds, recurrence); }
     catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
     refresh();
     return true;
 }
 
 bool TaskModel::addTag(const QString &name, const QString &color) {
-    try { tagFilter_ = store_.addTag(name, color).id; }
+    try {
+        const auto previous = tagFilter_;
+        tagFilter_ = store_.addTag(name, color).id;
+        if (tagFilter_ != previous) emit tagFilterChanged();
+    }
     catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
     refresh();
     return true;
@@ -227,6 +310,7 @@ void TaskModel::setListFilter(const QString &id) {
     for (const auto &item : listsFor(projectId_)) if (item.toMap().value("id").toString() == id) found = true;
     if (!found) { setError("Task list not found in this project."); return; }
     listFilter_ = id;
+    emit listFilterChanged();
     refresh();
 }
 
@@ -252,7 +336,13 @@ bool TaskModel::moveProject(const QString &direction) {
 }
 
 bool TaskModel::addList(const QString &name) {
-    try { const auto list = store_.addList(projectId_, name); listFilter_ = list.id; }
+    try {
+        const auto list = store_.addList(projectId_, name);
+        if (listFilter_ != list.id) {
+            listFilter_ = list.id;
+            emit listFilterChanged();
+        }
+    }
     catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
     refresh();
     return true;

@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
+#include <QHash>
 #include <QFileInfo>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -63,6 +64,17 @@ QString canonicalDate(const QString &value, const QString &field) {
     if (!parsed.isValid() || parsed.toString(Qt::ISODate) != value)
         fail(field + " must use YYYY-MM-DD or be empty.");
     return value;
+}
+QString nextRecurringDate(const QString &value, const QString &recurrence) {
+    if (value.isEmpty()) return {};
+    QDate date = QDate::fromString(value, Qt::ISODate);
+    if (recurrence == "daily") date = date.addDays(1);
+    else if (recurrence == "weekly") date = date.addDays(7);
+    else if (recurrence == "monthly") date = date.addMonths(1);
+    else if (recurrence == "weekdays") {
+        do { date = date.addDays(1); } while (date.dayOfWeek() > 5);
+    }
+    return date.toString(Qt::ISODate);
 }
 qint64 positiveId(const QString &id) {
     bool valid = false;
@@ -214,6 +226,26 @@ void TaskStore::migrate() {
         exec(db_, "CREATE INDEX task_tags_tag ON task_tags(tag_id,task_id)");
         exec(db_, "PRAGMA user_version=7");
     }
+    if (current < 8) {
+        exec(db_, "ALTER TABLE tasks ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none' "
+                  "CHECK(recurrence IN ('none','daily','weekdays','weekly','monthly'))");
+        exec(db_, "ALTER TABLE tasks ADD COLUMN recurrence_source_id INTEGER REFERENCES tasks(id)");
+        exec(db_, "CREATE UNIQUE INDEX tasks_recurrence_source ON tasks(recurrence_source_id) "
+                  "WHERE recurrence_source_id IS NOT NULL");
+        exec(db_, "CREATE TABLE task_notifications (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, "
+                  "kind TEXT NOT NULL CHECK(kind IN ('scheduled','due')), date TEXT NOT NULL, "
+                  "notified_at TEXT NOT NULL, PRIMARY KEY(task_id,kind,date))");
+        exec(db_, "CREATE INDEX notifications_date ON task_notifications(date,task_id)");
+        exec(db_, "PRAGMA user_version=8");
+    }
+    if (current < 9) {
+        exec(db_, "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, schema_version INTEGER NOT NULL)");
+        exec(db_, "INSERT INTO settings(key,value,schema_version) VALUES "
+                  "('default_project_id','',1),('notifications_enabled','true',1),"
+                  "('notification_days_before','0',1),('dms_show_next_task','true',1),"
+                  "('dms_use_default_project','false',1)");
+        exec(db_, "PRAGMA user_version=9");
+    }
     transaction.commit();
 }
 
@@ -272,11 +304,21 @@ void TaskStore::validatePlanning(const QString &scheduledDate, const QString &du
         fail("Scheduled date cannot be later than due date.");
 }
 
+void TaskStore::validateRecurrence(const QString &recurrence, const QString &scheduledDate,
+                                   const QString &dueDate) const {
+    if (recurrence != "none" && recurrence != "daily" && recurrence != "weekdays"
+        && recurrence != "weekly" && recurrence != "monthly")
+        fail("Recurrence must be none, daily, weekdays, weekly, or monthly.");
+    if (recurrence != "none" && scheduledDate.isEmpty() && dueDate.isEmpty())
+        fail("A recurring task needs a scheduled or due date.");
+}
+
 Task TaskStore::add(const QString &title, const QString &projectId, const QString &listId,
                     const QString &scheduledDate, const QString &dueDate, int priority,
-                    const QStringList &tagIds) {
+                    const QStringList &tagIds, const QString &recurrence) {
     const QString cleaned = titleText(title);
     validatePlanning(scheduledDate, dueDate, priority);
+    validateRecurrence(recurrence, scheduledDate, dueDate);
     Transaction transaction(db_);
     const auto canonicalTags = validateTagIds(tagIds);
     QSqlQuery query(db_);
@@ -284,8 +326,8 @@ Task TaskStore::add(const QString &title, const QString &projectId, const QStrin
     validateProject(projectId, true);
     validateList(listId, projectId);
     const auto order = nextOrder();
-    query.prepare("INSERT INTO tasks(title, created_at, project_id, list_id, sort_order, scheduled_date, due_date, priority) "
-                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    query.prepare("INSERT INTO tasks(title, created_at, project_id, list_id, sort_order, scheduled_date, due_date, priority, recurrence) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     query.addBindValue(cleaned);
     query.addBindValue(timestamp);
     query.addBindValue(projectId.isEmpty() ? QVariant() : QVariant(positiveId(projectId)));
@@ -294,6 +336,7 @@ Task TaskStore::add(const QString &title, const QString &projectId, const QStrin
     query.addBindValue(scheduledDate.isEmpty() ? QVariant() : QVariant(scheduledDate));
     query.addBindValue(dueDate.isEmpty() ? QVariant() : QVariant(dueDate));
     query.addBindValue(priority);
+    query.addBindValue(recurrence);
     run(query);
     const QString taskId = query.lastInsertId().toString();
     replaceTaskTags(taskId, canonicalTags);
@@ -305,18 +348,19 @@ Task TaskStore::add(const QString &title, const QString &projectId, const QStrin
 bool TaskStore::edit(const QString &id, const QString &title, const QString &note,
                      const QString &projectId, const QString &listId,
                      const QString &scheduledDate, const QString &dueDate, int priority,
-                     const QStringList &tagIds) {
+                     const QStringList &tagIds, const QString &recurrence) {
     const auto number = positiveId(id);
     const auto cleaned = titleText(title);
     if (note.size() > 100000) fail("Task notes must be 100,000 characters or fewer.");
     validatePlanning(scheduledDate, dueDate, priority);
+    validateRecurrence(recurrence, scheduledDate, dueDate);
     Transaction transaction(db_);
     auto canonicalTags = validateTagIds(tagIds);
     canonicalTags.sort();
     validateProject(projectId, true);
     validateList(listId, projectId);
     QSqlQuery query(db_);
-    query.prepare("SELECT title,note,project_id,list_id,scheduled_date,due_date,priority,archived FROM tasks WHERE id=?");
+    query.prepare("SELECT title,note,project_id,list_id,scheduled_date,due_date,priority,archived,recurrence FROM tasks WHERE id=?");
     query.addBindValue(number);
     run(query);
     if (!query.next()) fail("Task not found.");
@@ -331,14 +375,16 @@ bool TaskStore::edit(const QString &id, const QString &title, const QString &not
                                {"project_id", query.value(2).toString()}, {"list_id", query.value(3).toString()},
                                {"scheduled_date", query.value(4).toString()}, {"due_date", query.value(5).toString()},
                                {"priority", query.value(6).toInt()},
+                               {"recurrence", query.value(8).toString()},
                                {"tag_ids", QJsonArray::fromStringList(previousTags)}};
     const QJsonObject next{{"title", cleaned}, {"note", note}, {"project_id", canonicalProject},
                            {"list_id", canonicalList}, {"scheduled_date", scheduledDate},
                            {"due_date", dueDate}, {"priority", priority},
+                           {"recurrence", recurrence},
                            {"tag_ids", QJsonArray::fromStringList(canonicalTags)}};
     query.finish();
     if (previous == next) { transaction.commit(); return false; }
-    query.prepare("UPDATE tasks SET title=?, note=?, project_id=?, list_id=?, scheduled_date=?, due_date=?, priority=? WHERE id=?");
+    query.prepare("UPDATE tasks SET title=?, note=?, project_id=?, list_id=?, scheduled_date=?, due_date=?, priority=?, recurrence=? WHERE id=?");
     query.addBindValue(cleaned);
     query.addBindValue(note.isNull() ? QStringLiteral("") : note);
     query.addBindValue(canonicalProject.isEmpty() ? QVariant() : QVariant(canonicalProject));
@@ -346,6 +392,7 @@ bool TaskStore::edit(const QString &id, const QString &title, const QString &not
     query.addBindValue(scheduledDate.isEmpty() ? QVariant() : QVariant(scheduledDate));
     query.addBindValue(dueDate.isEmpty() ? QVariant() : QVariant(dueDate));
     query.addBindValue(priority);
+    query.addBindValue(recurrence);
     query.addBindValue(number);
     run(query);
     replaceTaskTags(id, canonicalTags);
@@ -362,13 +409,22 @@ bool TaskStore::setCompleted(const QString &id, bool completed) {
     const auto number = positiveId(id);
     Transaction transaction(db_);
     QSqlQuery query(db_);
-    query.prepare("SELECT completed_at,project_id,archived FROM tasks WHERE id=?");
+    query.prepare("SELECT completed_at,project_id,archived,title,note,list_id,scheduled_date,due_date,priority,recurrence "
+                  "FROM tasks WHERE id=?");
     query.addBindValue(number);
     run(query);
     if (!query.next()) fail("Task not found.");
     if (query.value(2).toBool()) fail("Restore the archived task before changing it.");
     validateProject(query.value(1).toString(), true);
     const bool wasCompleted = !query.value(0).isNull();
+    const QString projectId = query.value(1).toString();
+    const QString title = query.value(3).toString();
+    const QString note = query.value(4).toString();
+    const QString listId = query.value(5).toString();
+    const QString scheduledDate = query.value(6).toString();
+    const QString dueDate = query.value(7).toString();
+    const int priority = query.value(8).toInt();
+    const QString recurrence = query.value(9).toString();
     query.finish();
     if (wasCompleted == completed) { transaction.commit(); return false; }
     const QString timestamp = now();
@@ -378,6 +434,34 @@ bool TaskStore::setCompleted(const QString &id, bool completed) {
     run(query);
     event(db_, id, completed ? "completed" : "reopened", timestamp,
           wasCompleted ? "completed" : "open", completed ? "completed" : "open");
+    if (completed && recurrence != "none") {
+        query.finish();
+        query.prepare("SELECT id FROM tasks WHERE recurrence_source_id=?");
+        query.addBindValue(number);
+        run(query);
+        const bool alreadyGenerated = query.next();
+        query.finish();
+        if (!alreadyGenerated) {
+            query.prepare("INSERT INTO tasks(title,created_at,project_id,note,list_id,sort_order,scheduled_date,due_date,priority,recurrence,recurrence_source_id) "
+                          "VALUES (?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM tasks),?,?,?,?,?)");
+            query.addBindValue(title);
+            query.addBindValue(timestamp);
+            query.addBindValue(projectId.isEmpty() ? QVariant() : QVariant(projectId));
+            query.addBindValue(note);
+            query.addBindValue(listId.isEmpty() ? QVariant() : QVariant(listId));
+            query.addBindValue(nextRecurringDate(scheduledDate, recurrence));
+            query.addBindValue(nextRecurringDate(dueDate, recurrence));
+            query.addBindValue(priority);
+            query.addBindValue(recurrence);
+            query.addBindValue(number);
+            run(query);
+            const QString nextId = query.lastInsertId().toString();
+            QStringList tags;
+            for (const auto &tag : taskTags(id)) tags.append(tag.id);
+            replaceTaskTags(nextId, tags);
+            event(db_, nextId, "created", timestamp, {}, id);
+        }
+    }
     transaction.commit();
     return true;
 }
@@ -410,7 +494,7 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
     if (scope != "project" && scope != "today" && scope != "upcoming" && scope != "search")
         fail("View must be project, today, upcoming, or search.");
     QString sql = "SELECT t.id,t.title,t.created_at,t.completed_at,t.project_id,t.note,t.list_id,t.sort_order,"
-                  "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived "
+                  "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived,t.recurrence,t.recurrence_source_id "
                   "FROM tasks t LEFT JOIN projects p ON p.id=t.project_id "
                   "LEFT JOIN task_lists l ON l.id=t.list_id WHERE 1=1";
     QVector<QVariant> bindings;
@@ -481,9 +565,22 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
                   query.value(6).toString(), query.value(7).toLongLong(),
                   query.value(8).toString(), query.value(9).toString(),
                   query.value(10).toInt(), query.value(11).toString(),
-                  query.value(12).toString(), query.value(13).toBool(), {}};
-        task.tags = taskTags(task.id);
+                  query.value(12).toString(), query.value(13).toBool(), {},
+                  query.value(14).toString(), query.value(15).toString()};
         result.append(std::move(task));
+    }
+    if (!result.isEmpty()) {
+        QStringList ids;
+        for (const auto &task : result) ids.append(task.id);
+        QSqlQuery tagsQuery(db_);
+        tagsQuery.prepare("SELECT tt.task_id,t.id,t.name,t.color FROM task_tags tt JOIN tags t ON t.id=tt.tag_id WHERE tt.task_id IN (" +
+                          QStringList(ids.size(), "?").join(',') + ") ORDER BY t.name COLLATE NOCASE,t.id");
+        for (const auto &id : ids) tagsQuery.addBindValue(id);
+        run(tagsQuery);
+        QHash<QString,QVector<Tag>> tagsByTask;
+        while (tagsQuery.next()) tagsByTask[tagsQuery.value(0).toString()].append(
+            {tagsQuery.value(1).toString(), tagsQuery.value(2).toString(), tagsQuery.value(3).toString()});
+        for (auto &task : result) task.tags = tagsByTask.value(task.id);
     }
     return result;
 }
@@ -491,7 +588,7 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
 Task TaskStore::task(const QString &id) const {
     QSqlQuery query(db_);
     query.prepare("SELECT t.id,t.title,t.created_at,t.completed_at,t.project_id,t.note,t.list_id,t.sort_order,"
-                  "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived "
+                  "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived,t.recurrence,t.recurrence_source_id "
                   "FROM tasks t LEFT JOIN projects p ON p.id=t.project_id "
                   "LEFT JOIN task_lists l ON l.id=t.list_id WHERE t.id=?");
     query.addBindValue(positiveId(id));
@@ -501,7 +598,8 @@ Task TaskStore::task(const QString &id) const {
                 query.value(3).toString(), query.value(4).toString(), query.value(5).toString(),
                 query.value(6).toString(), query.value(7).toLongLong(), query.value(8).toString(),
                 query.value(9).toString(), query.value(10).toInt(), query.value(11).toString(),
-                query.value(12).toString(), query.value(13).toBool(), {}};
+                query.value(12).toString(), query.value(13).toBool(), {},
+                query.value(14).toString(), query.value(15).toString()};
     result.tags = taskTags(result.id);
     return result;
 }
@@ -510,6 +608,91 @@ int TaskStore::dataVersion() const {
     QSqlQuery query(db_);
     if (!query.exec("PRAGMA data_version") || !query.next()) fail("Cannot check database changes.");
     return query.value(0).toInt();
+}
+
+QVector<TaskNotification> TaskStore::pendingNotifications(const QString &throughDate) const {
+    canonicalDate(throughDate, "Notification date");
+    if (throughDate.isEmpty()) fail("Notification date must not be empty.");
+    QSqlQuery query(db_);
+    query.prepare("SELECT t.id,t.title,t.scheduled_date,t.due_date FROM tasks t "
+                  "LEFT JOIN projects p ON p.id=t.project_id WHERE t.completed_at IS NULL AND t.archived=0 "
+                  "AND (t.project_id IS NULL OR p.archived=0) AND "
+                  "((t.scheduled_date IS NOT NULL AND t.scheduled_date<=?) OR (t.due_date IS NOT NULL AND t.due_date<=?)) "
+                  "ORDER BY t.priority DESC,COALESCE(t.due_date,t.scheduled_date),t.id");
+    query.addBindValue(throughDate);
+    query.addBindValue(throughDate);
+    run(query);
+    QVector<TaskNotification> result;
+    while (query.next()) {
+        const QString id = query.value(0).toString();
+        const QString title = query.value(1).toString();
+        const QString scheduled = query.value(2).toString();
+        const QString due = query.value(3).toString();
+        const auto append = [&](const QString &kind, const QString &date) {
+            if (date.isEmpty() || date > throughDate) return;
+            QSqlQuery sent(db_);
+            sent.prepare("SELECT 1 FROM task_notifications WHERE task_id=? AND kind=? AND date=?");
+            sent.addBindValue(id); sent.addBindValue(kind); sent.addBindValue(date); run(sent);
+            if (!sent.next()) result.append({id, title, kind, date});
+        };
+        if (!due.isEmpty()) append("due", due);
+        else append("scheduled", scheduled);
+    }
+    return result;
+}
+
+bool TaskStore::markNotificationSent(const TaskNotification &notification) {
+    canonicalDate(notification.date, "Notification date");
+    if (notification.kind != "scheduled" && notification.kind != "due")
+        fail("Notification kind must be scheduled or due.");
+    QSqlQuery query(db_);
+    query.prepare("INSERT OR IGNORE INTO task_notifications(task_id,kind,date,notified_at) VALUES (?,?,?,?)");
+    query.addBindValue(positiveId(notification.taskId));
+    query.addBindValue(notification.kind);
+    query.addBindValue(notification.date);
+    query.addBindValue(now());
+    run(query);
+    return query.numRowsAffected() > 0;
+}
+
+Settings TaskStore::settings() const {
+    Settings result;
+    QSqlQuery query(db_);
+    query.prepare("SELECT key,value FROM settings");
+    run(query);
+    while (query.next()) {
+        const QString key = query.value(0).toString();
+        const QString value = query.value(1).toString();
+        if (key == "default_project_id") result.defaultProjectId = value;
+        else if (key == "notifications_enabled") result.notificationsEnabled = value == "true";
+        else if (key == "notification_days_before") result.notificationDaysBefore = value.toInt();
+        else if (key == "dms_show_next_task") result.dmsShowNextTask = value == "true";
+        else if (key == "dms_use_default_project") result.dmsUseDefaultProject = value == "true";
+    }
+    return result;
+}
+
+void TaskStore::saveSettings(const Settings &settings) {
+    if (settings.notificationDaysBefore < 0 || settings.notificationDaysBefore > 30)
+        fail("Notification advance must be between 0 and 30 days.");
+    validateProject(settings.defaultProjectId, true);
+    Transaction transaction(db_);
+    QSqlQuery query(db_);
+    query.prepare("INSERT INTO settings(key,value,schema_version) VALUES (?,?,1) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value,schema_version=excluded.schema_version");
+    const QVector<QPair<QString,QString>> values{
+        {"default_project_id", settings.defaultProjectId},
+        {"notifications_enabled", settings.notificationsEnabled ? "true" : "false"},
+        {"notification_days_before", QString::number(settings.notificationDaysBefore)},
+        {"dms_show_next_task", settings.dmsShowNextTask ? "true" : "false"},
+        {"dms_use_default_project", settings.dmsUseDefaultProject ? "true" : "false"}};
+    for (const auto &value : values) {
+        query.bindValue(0, value.first);
+        query.bindValue(1, value.second);
+        run(query);
+        query.finish();
+    }
+    transaction.commit();
 }
 
 bool TaskStore::editProject(const QString &id, const QString &name, const QString &color) {

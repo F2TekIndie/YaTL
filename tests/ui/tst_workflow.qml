@@ -171,6 +171,7 @@ Item {
 
                 findChild(appWindow, "editScheduled").text = today;
                 findChild(appWindow, "editDue").text = tomorrow;
+                selectProject(findChild(appWindow, "editRecurrence"), 3);
                 mouseClick(findChild(appWindow, "saveEditButton"));
                 tryCompare(editor, "visible", false);
                 tryVerify(function () {
@@ -179,6 +180,15 @@ Item {
                 compare(tasks.itemAtIndex(0).scheduledDate, today);
                 compare(tasks.itemAtIndex(0).dueDate, tomorrow);
                 compare(tasks.itemAtIndex(0).priority, 3);
+                compare(tasks.itemAtIndex(0).recurrence, "weekly");
+
+                mouseClick(findChild(tasks.itemAtIndex(0), "edit_" + id));
+                tryCompare(editor, "opened", true);
+                selectProject(findChild(appWindow, "editRecurrence"), 0);
+                mouseClick(findChild(appWindow, "saveEditButton"));
+                tryCompare(editor, "visible", false);
+                tryVerify(function () { return tasks.itemAtIndex(0) !== null; });
+                compare(tasks.itemAtIndex(0).recurrence, "none");
 
                 mouseClick(findChild(appWindow, "todayViewButton"));
                 tryCompare(taskModel, "view", "today");
@@ -447,6 +457,31 @@ Item {
                 compare(tasks.itemAtIndex(0).taskId, taskId);
                 taskModel.view = "project";
                 taskModel.tagFilter = "*";
+            }
+
+            function test_zz_applicationSettingsPersist() {
+                appWindow.requestActivate();
+                tryCompare(appWindow, "active", true);
+                taskModel.view = "project";
+                mouseClick(findChild(appWindow, "newProjectButton"));
+                const projectDialog = findChild(appWindow, "projectDialog");
+                tryCompare(projectDialog, "opened", true);
+                findChild(appWindow, "projectName").text = "Default UI";
+                mouseClick(findChild(appWindow, "createProjectButton"));
+                tryCompare(projectDialog, "visible", false);
+                mouseClick(findChild(appWindow, "applicationSettingsButton"));
+                const dialog = findChild(appWindow, "applicationSettings");
+                tryCompare(dialog, "opened", true);
+                const defaultProject = findChild(appWindow, "defaultProjectSetting");
+                defaultProject.currentIndex = 0;
+                dialog.defaultProjectIdChoice = "";
+                mouseClick(findChild(appWindow, "notificationsEnabledSetting"));
+                findChild(appWindow, "notificationDaysSetting").value = 3;
+                mouseClick(findChild(appWindow, "dmsShowNextSetting"));
+                mouseClick(findChild(appWindow, "dmsUseDefaultSetting"));
+                mouseClick(findChild(appWindow, "saveApplicationSettings"));
+                tryCompare(dialog, "visible", false);
+                verify(taskModel.settings !== undefined);
             }
         }
     }

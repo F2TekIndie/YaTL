@@ -1,5 +1,7 @@
 #include "desktopipc.h"
 #include "taskmodel.h"
+#include "dmsthemeprovider.h"
+#include "notificationservice.h"
 #include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -10,13 +12,14 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QTextStream>
+#include <QTimer>
 #include <QWindow>
 #include <exception>
 
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("yatl");
-    app.setApplicationVersion("0.7.0");
+    app.setApplicationVersion("0.9.0");
     app.setOrganizationName("YaTL");
     app.setDesktopFileName("org.yatl.YaTL");
     QCommandLineParser parser;
@@ -52,10 +55,26 @@ int main(int argc, char *argv[]) {
 
         TaskStore store(databasePath);
         TaskModel model(store);
+        DmsThemeProvider theme;
+        const auto notifySafely = [&store] {
+            try {
+                NotificationService::runAsync(store, QCoreApplication::instance());
+            } catch (const std::exception &) {
+                // Notifications are best effort and must never bring down the UI.
+            }
+        };
+        QTimer notificationTimer;
+        notificationTimer.setInterval(60000);
+        QObject::connect(&notificationTimer, &QTimer::timeout, &app, notifySafely);
+        if (!quickCapture) {
+            notificationTimer.start();
+            QTimer::singleShot(0, &app, notifySafely);
+        }
         if (!quickCapture) model.setView(initialView);
         QQuickStyle::setStyle("Fusion");
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("taskModel", &model);
+        engine.rootContext()->setContextProperty("dmsTheme", &theme);
         engine.load(QUrl(quickCapture ? "qrc:/qml/QuickCapture.qml" : "qrc:/qml/Main.qml"));
         if (engine.rootObjects().isEmpty()) return 1;
         auto *window = qobject_cast<QWindow *>(engine.rootObjects().first());

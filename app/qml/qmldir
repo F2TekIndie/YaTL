@@ -1,0 +1,15 @@
+singleton AppTheme 1.0 AppTheme.qml
+AppCard 1.0 AppCard.qml
+AppButton 1.0 AppButton.qml
+AppIconButton 1.0 AppIconButton.qml
+AppTextField 1.0 AppTextField.qml
+AppComboBox 1.0 AppComboBox.qml
+AppSwitch 1.0 AppSwitch.qml
+AppSegmentedControl 1.0 AppSegmentedControl.qml
+AppDialog 1.0 AppDialog.qml
+AppMenu 1.0 AppMenu.qml
+AppBadge 1.0 AppBadge.qml
+AppNavigationItem 1.0 AppNavigationItem.qml
+AppSectionHeader 1.0 AppSectionHeader.qml
+AppDateField 1.0 AppDateField.qml
+AppSpinBox 1.0 AppSpinBox.qml

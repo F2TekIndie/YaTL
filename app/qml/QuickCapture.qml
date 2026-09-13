@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "." as App
 
 ApplicationWindow {
     id: window
@@ -10,34 +11,38 @@ ApplicationWindow {
     minimumHeight: 150
     visible: true
     title: "YaTL Quick Capture"
-    color: "#f5f4f0"
-    palette.window: "#f5f4f0"
-    palette.windowText: "#202a23"
-    palette.text: "#202a23"
-    palette.base: "#ffffff"
-    palette.button: "#e9ede6"
-    palette.buttonText: "#202a23"
-    palette.highlight: "#376548"
-    palette.highlightedText: "#ffffff"
+    color: App.AppTheme.background
+    palette.window: App.AppTheme.background
+    palette.windowText: App.AppTheme.onSurface
+    palette.text: App.AppTheme.onSurface
+    palette.base: App.AppTheme.surface
+    palette.button: App.AppTheme.surfaceContainerHigh
+    palette.buttonText: App.AppTheme.onSurface
+    palette.highlight: App.AppTheme.primary
+    palette.highlightedText: App.AppTheme.onPrimary
 
     function capture() {
         if (taskModel.add(titleInput.text))
             window.close();
     }
 
-    ColumnLayout {
+    App.AppCard {
         anchors.fill: parent
-        anchors.margins: 20
+        anchors.margins: App.AppTheme.space3
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: App.AppTheme.space3
         spacing: 10
 
         Label {
             text: "Quick capture to Inbox"
             font.pixelSize: 20
             font.bold: true
+            color: App.AppTheme.onSurface
         }
         RowLayout {
             Layout.fillWidth: true
-            TextField {
+            App.AppTextField {
                 id: titleInput
                 objectName: "quickTitleInput"
                 Layout.fillWidth: true
@@ -46,7 +51,7 @@ ApplicationWindow {
                 Accessible.name: "Task title"
                 onAccepted: window.capture()
             }
-            Button {
+            App.AppButton {
                 objectName: "quickAddButton"
                 text: "Add"
                 onClicked: window.capture()
@@ -57,9 +62,10 @@ ApplicationWindow {
             Layout.fillWidth: true
             visible: taskModel.error.length > 0
             text: taskModel.error
-            color: "#aa2727"
+            color: App.AppTheme.error
             wrapMode: Text.Wrap
             Accessible.role: Accessible.AlertMessage
+        }
         }
     }
 }

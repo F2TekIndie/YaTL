@@ -7,8 +7,15 @@ The implementation covers **capture → organize/order/tag → schedule → revi
 → search → complete → archive/restore → restart**, alongside project, list, and tag management.
 The app and `yatlctl` share validation, transactional writes, and the same local
 database. DMS and niri integrations use the same CLI and activation path.
-Recurrence, notifications, settings, and export follow in later iterations; see
+Export follows in a later iteration; see
 [implementation status](docs/implementation.md).
+
+The visual foundation now includes a live DankMaterialShell semantic-theme
+bridge with Qt-palette fallback and reusable QML controls. If DMS is running,
+YaTL reads `$XDG_CACHE_HOME/DankMaterialShell/dms-colors.json` and updates open
+windows when that file changes; missing or malformed data leaves the last valid
+palette in place. The main window now uses that foundation for a sidebar shell,
+page navigation, search, and project-scoped organization controls.
 
 ## Build and verify
 
@@ -30,7 +37,7 @@ The same script is configured in `.github/workflows/verify.yml` for Fedora 44.
 For a Fedora system toolchain, install dependencies yourself:
 
 ```sh
-sudo dnf install gcc-c++ make python3 qt6-qtbase-devel qt6-qtdeclarative-devel libglvnd-devel niri
+sudo dnf install gcc-c++ make python3 qt6-qtbase-devel qt6-qtdeclarative-devel libglvnd-devel libnotify niri
 QMAKE=/usr/bin/qmake6 ./scripts/verify.sh
 ```
 
@@ -59,6 +66,11 @@ future test needs exceed their capabilities.
 ./build/bin/yatlctl open today
 ./build/bin/yatlctl focus
 ./build/bin/yatlctl capture
+./build/bin/yatlctl add "Weekly review" --due 2026-09-18 --recurrence weekly
+./build/bin/yatlctl notify
+./build/bin/yatlctl export --output /tmp/yatl-export.json
+./build/bin/yatlctl settings
+./build/bin/yatlctl settings-set --default-project inbox --notifications on --notification-days 0
 ```
 
 Use the actual ID returned by `add`. Successful CLI commands emit JSON to stdout.
@@ -145,8 +157,26 @@ their project is active, and become read-only until restored. Optional task list
 belong to one project. Up/Down ordering persists for projects, task lists, and tasks
 within filtered project views. Tags are global, case-insensitively unique, limited
 to 60 characters, and use validated `#RRGGBB` colors. A task accepts at most 50
-distinct tags. Migration to schema 7 preserves existing projects, lists, tasks,
-events, planning values, and visible ordering; existing tasks begin with no tags.
+distinct tags. Recurrence accepts `daily`, `weekdays`, `weekly`, and `monthly`
+for tasks with a scheduled or due date. Completing an occurrence retains it in
+history and creates one linked successor with advanced dates and copied task
+details; reopening and completing it again does not duplicate that successor.
+Settings persist the default capture project, notification enablement and advance
+window (0–30 days), plus DMS display and capture preferences. Use
+`yatlctl settings-set` to update them; `add --use-default` uses the configured
+project.
+
+While the main app is running it checks once per minute for reminders and invokes
+the standard `notify-send` command. A task uses its due date when present and its
+scheduled date otherwise. Successful delivery is recorded, preventing repeats
+after restart; a failed delivery stays pending. `yatlctl notify` runs the same
+scheduler once and reports attempted, sent, and failed counts as JSON.
+
+`yatlctl export` writes a versioned JSON snapshot containing settings, projects,
+lists, tags, and tasks. Omit `--output` to print the snapshot to stdout.
+
+Migration to schema 8 preserves existing projects, lists, tasks, events, planning
+values, tags, and visible ordering; existing tasks begin with no recurrence.
 
 ## Desktop and installation
 

@@ -108,8 +108,9 @@ class DesktopIntegrationTest(unittest.TestCase):
         self.assertTrue((plugin / manifest["component"][2:]).is_file())
         self.assertTrue((plugin / manifest["startupCheck"][2:]).is_file())
         source = (plugin / "YaTLWidget.qml").read_text()
-        for command in ("summary", "today", "add", "complete", "open", "capture"):
+        for command in ("summary", "today", "settings", "add", "complete", "open", "capture"):
             self.assertIn(f'"{command}"', source)
+        self.assertIn("--use-default", source)
 
     def test_niri_fragment_and_desktop_ids(self):
         fragment = (REPO / "integrations/niri/yatl.kdl").read_text()
