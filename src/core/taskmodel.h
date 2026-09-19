@@ -58,6 +58,9 @@ public:
     Q_INVOKABLE bool complete(const QString &id);
     Q_INVOKABLE bool reopen(const QString &id);
     Q_INVOKABLE bool archiveTask(const QString &id, bool archived);
+    Q_INVOKABLE bool deleteTask(const QString &id);
+    Q_INVOKABLE bool restoreTask(const QString &id);
+    Q_INVOKABLE bool purgeTask(const QString &id);
     Q_INVOKABLE bool addProject(const QString &name);
     Q_INVOKABLE bool edit(const QString &id, const QString &title, const QString &note,
                           const QString &projectId, const QString &listId,
@@ -67,6 +70,9 @@ public:
     Q_INVOKABLE bool editTag(const QString &id, const QString &name, const QString &color);
     Q_INVOKABLE bool editProject(const QString &name, const QString &color);
     Q_INVOKABLE bool archiveProject(bool archived);
+    Q_INVOKABLE bool deleteProject(const QString &id = {});
+    Q_INVOKABLE bool restoreProject(const QString &id);
+    Q_INVOKABLE bool purgeProject(const QString &id);
     Q_INVOKABLE bool moveProject(const QString &direction);
     Q_INVOKABLE bool addList(const QString &name);
     Q_INVOKABLE bool renameList(const QString &name);

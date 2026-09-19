@@ -62,6 +62,9 @@ future test needs exceed their capabilities.
 ./build/bin/yatlctl search "release"
 ./build/bin/yatlctl archive 1
 ./build/bin/yatlctl restore 1
+./build/bin/yatlctl delete 1
+./build/bin/yatlctl undelete 1
+./build/bin/yatlctl purge 1
 ./build/bin/yatlctl summary
 ./build/bin/yatlctl open today
 ./build/bin/yatlctl focus
@@ -97,8 +100,9 @@ notes, destination, separate scheduled and due dates, priority, and multiple tag
 keep the dialog open; Cancel discards unsaved changes. **Today** shows open work
 that is overdue, due today, or scheduled by today. **Upcoming** shows open work
 with either date from tomorrow through the next 28 days. Search finds open and
-completed tasks by title, note, project, list, or tag name. The tag selector filters
-the current project or Inbox; **New tag** and **Edit tag** manage the global tag list.
+completed tasks by title, note, project, list, or tag name. The tag chips above the
+task list filter the current project or Inbox and can be clicked again to clear the
+filter; **New tag** and **Edit tag** manage the global tag list.
 **Reopen** returns completed
 work to the Open view. **Archive** removes a task from active and planning views;
 the project's Archived filter or Search can retrieve and restore it. Arrow controls
@@ -122,6 +126,9 @@ The equivalent CLI workflow is:
 ./build/bin/yatlctl project-archive 1
 ./build/bin/yatlctl projects --archived
 ./build/bin/yatlctl project-restore 1
+./build/bin/yatlctl project-delete 1
+./build/bin/yatlctl project-undelete 1
+./build/bin/yatlctl project-purge 1
 ./build/bin/yatlctl project-move 1 up
 ./build/bin/yatlctl edit 2 "Check package" --project 1 --list 1 --note "" --scheduled 2026-09-12 --due 2026-09-13 --priority 3
 ./build/bin/yatlctl list-move 1 up
@@ -175,8 +182,12 @@ scheduler once and reports attempted, sent, and failed counts as JSON.
 `yatlctl export` writes a versioned JSON snapshot containing settings, projects,
 lists, tags, and tasks. Omit `--output` to print the snapshot to stdout.
 
-Migration to schema 8 preserves existing projects, lists, tasks, events, planning
-values, tags, and visible ordering; existing tasks begin with no recurrence.
+Migration to schema 11 preserves existing projects, lists, tasks, events, planning
+values, tags, settings, recurrence links, notification history, and visible ordering.
+Delete is recoverable: task and project deletion hide records without discarding
+their content or tags, while `purge` permanently removes an already-deleted item.
+Restoring a project restores only tasks deleted with that project, not tasks that
+were deleted individually beforehand.
 
 ## Desktop and installation
 

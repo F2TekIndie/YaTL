@@ -28,7 +28,8 @@ ApplicationWindow {
         }
     }
     function openTaskEditor(id, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence) {
-        editor.editTask(id, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence);
+        editor.editTask(id, title, note, projectId, listId, scheduledDate, dueDate,
+                        priority, tags, recurrence);
     }
     function projectIndex(id) {
         for (let i = 0; i < taskModel.projects.length; ++i)
@@ -105,6 +106,14 @@ ApplicationWindow {
         const b = parseInt(hex.slice(5, 7), 16) / 255;
         return Qt.rgba(r, g, b, 0.16);
     }
+    function requestProjectDelete(id, name) {
+        if (!id)
+            return;
+        deleteProjectDialog.projectId = id;
+        deleteProjectDialog.projectName = name;
+        taskModel.clearError();
+        deleteProjectDialog.open();
+    }
     property var priorities: [
         {
             value: 0,
@@ -145,6 +154,39 @@ ApplicationWindow {
             name: "Monthly"
         }
     ]
+    property string undoKind: ""
+    property string undoId: ""
+    property string undoMessage: ""
+    Timer {
+        id: undoTimer
+        interval: 6000
+        onTriggered: window.clearUndo()
+    }
+    function clearUndo() {
+        undoKind = ""
+        undoId = ""
+        undoMessage = ""
+        undoTimer.stop()
+    }
+    function offerUndo(kind, id, message) {
+        undoKind = kind
+        undoId = id
+        undoMessage = message
+        undoTimer.restart()
+    }
+    function deleteTaskWithUndo(id) {
+        if (taskModel.deleteTask(id))
+            offerUndo("task", id, "Task deleted.")
+    }
+    function undoLastDelete() {
+        let restored = false
+        if (undoKind === "task")
+            restored = taskModel.restoreTask(undoId)
+        else if (undoKind === "project")
+            restored = taskModel.restoreProject(undoId)
+        if (restored)
+            clearUndo()
+    }
     function recurrenceName(value) {
         for (let item of recurrences)
             if (item.id === value)
@@ -154,7 +196,7 @@ ApplicationWindow {
     App.AppDialog {
         id: applicationSettings
         objectName: "applicationSettings"
-        title: "Settings"
+        title: ""
         anchors.centerIn: parent
         width: Math.min(window.width - 40, 560)
         height: Math.min(window.height - 16, 640)
@@ -483,6 +525,39 @@ ApplicationWindow {
         }
     }
     App.AppDialog {
+        id: deleteProjectDialog
+        objectName: "deleteProjectDialog"
+        property string projectId: ""
+        property string projectName: ""
+        title: "Delete project?"
+        anchors.centerIn: parent
+        width: Math.min(window.width - 40, 420)
+        modal: true
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: App.AppTheme.foreground
+                text: "Delete “" + deleteProjectDialog.projectName + "” and hide its tasks? You can undo this action."
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                App.AppButton { text: "Cancel"; variant: "text"; onClicked: deleteProjectDialog.close() }
+                App.AppButton {
+                    objectName: "confirmDeleteProjectButton"
+                    text: "Delete"
+                    variant: "tonal"
+                    onClicked: if (taskModel.deleteProject(deleteProjectDialog.projectId)) {
+                        window.offerUndo("project", deleteProjectDialog.projectId, "Project deleted.")
+                        deleteProjectDialog.close()
+                    }
+                }
+            }
+        }
+    }
+    App.AppDialog {
         id: editor
         objectName: "taskEditor"
         property string taskId: ""
@@ -784,14 +859,21 @@ ApplicationWindow {
                         }
                         Repeater {
                             model: taskModel.projects.filter(item => item.id !== "" && (!item.archived || taskModel.showArchived))
-                            delegate: App.AppNavigationItem {
+                            delegate: App.AppSwipeActionRow {
                                 required property var modelData
-                                text: modelData.displayName
-                                selected: taskModel.view === "project" && taskModel.projectId === modelData.id
                                 Layout.fillWidth: true
-                                onClicked: {
-                                    taskModel.view = "project";
-                                    taskModel.projectId = modelData.id;
+                                implicitHeight: App.AppTheme.minimumInteractiveHeight
+                                interactive: true
+                                actionEnabled: true
+                                onActionTriggered: window.requestProjectDelete(modelData.id, modelData.displayName)
+                                App.AppNavigationItem {
+                                    anchors.fill: parent
+                                    text: modelData.displayName
+                                    selected: taskModel.view === "project" && taskModel.projectId === modelData.id
+                                    onClicked: {
+                                        taskModel.view = "project";
+                                        taskModel.projectId = modelData.id;
+                                    }
                                 }
                             }
                         }
@@ -810,6 +892,26 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.margins: App.AppTheme.space6
             spacing: App.AppTheme.space4
+            AppCard {
+                objectName: "undoDeleteCard"
+                visible: window.undoId.length > 0
+                Layout.fillWidth: true
+                implicitHeight: 48
+                RowLayout {
+                    anchors.fill: parent
+                    Label {
+                        Layout.fillWidth: true
+                        text: window.undoMessage
+                        color: App.AppTheme.foreground
+                    }
+                    AppButton {
+                        objectName: "undoDeleteButton"
+                        text: "Undo"
+                        variant: "tonal"
+                        onClicked: window.undoLastDelete()
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 App.AppSectionHeader {
@@ -1128,7 +1230,7 @@ ApplicationWindow {
                             text: modelData.name
                             checkable: true
                             checked: taskModel.tagFilter === modelData.id
-                            onTriggered: taskModel.tagFilter = modelData.id
+                            onTriggered: taskModel.tagFilter = taskModel.tagFilter === modelData.id ? "*" : modelData.id
                         }
                     }
                     MenuSeparator {}
@@ -1150,6 +1252,34 @@ ApplicationWindow {
                     color: App.AppTheme.mutedForeground
                 }
             }
+            Flow {
+                objectName: "taskTagFilters"
+                Layout.fillWidth: true
+                visible: taskModel.view === "project" && taskModel.tags.length > 0
+                spacing: App.AppTheme.space2
+
+                App.AppButton {
+                    objectName: "allTagFilter"
+                    text: "All tags"
+                    variant: taskModel.tagFilter === "*" ? "tonal" : "text"
+                    checkable: true
+                    checked: taskModel.tagFilter === "*"
+                    onClicked: taskModel.tagFilter = "*"
+                }
+                Repeater {
+                    model: taskModel.tags
+                    delegate: App.AppButton {
+                        required property var modelData
+                        objectName: "taskTagFilter_" + modelData.id
+                        text: modelData.name
+                        variant: taskModel.tagFilter === modelData.id ? "tonal" : "text"
+                        checkable: true
+                        checked: taskModel.tagFilter === modelData.id
+                        Accessible.name: "Filter tasks by " + modelData.name
+                        onClicked: taskModel.tagFilter = taskModel.tagFilter === modelData.id ? "*" : modelData.id
+                    }
+                }
+            }
             ListView {
                 id: taskList
                 objectName: "taskList"
@@ -1159,7 +1289,8 @@ ApplicationWindow {
                 spacing: 8
                 model: taskModel
                 ScrollBar.vertical: ScrollBar {}
-                delegate: App.AppCard {
+                delegate: App.AppSwipeActionRow {
+                    id: taskRowDelegate
                     required property string taskId
                     required property string title
                     required property bool completed
@@ -1182,6 +1313,8 @@ ApplicationWindow {
                     height: row.implicitHeight + 24
                     color: App.AppTheme.surface
                     border.color: App.AppTheme.outlineVariant
+                    actionEnabled: !archived && (taskModel.view !== "project" || !taskModel.projectInfo.archived)
+                    onActionTriggered: window.deleteTaskWithUndo(taskId)
                     RowLayout {
                         id: row
                         anchors.left: parent.left
@@ -1198,6 +1331,7 @@ ApplicationWindow {
                             onClicked: completed ? taskModel.reopen(taskId) : taskModel.complete(taskId)
                         }
                         ColumnLayout {
+                            objectName: "taskContent_" + taskId
                             Layout.fillWidth: true
                             Label {
                                 Layout.fillWidth: true
@@ -1275,42 +1409,25 @@ ApplicationWindow {
                             z: 6
                             objectName: "menu_" + taskId
                             iconText: "⋯"
-                            Accessible.name: "Edit task " + title
-                            onClicked: window.openTaskEditor(taskId, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence)
-                        }
-                        App.AppMenu {
-                            id: taskMenu
-                            x: taskMenuButton.x - width + taskMenuButton.width
-                            y: taskMenuButton.y + taskMenuButton.height
-                            MenuItem {
-                                text: "Edit"
-                                enabled: !archived && (taskModel.view !== "project" || !taskModel.projectInfo.archived)
-                                onTriggered: editor.editTask(taskId, title, note, projectId, listId, scheduledDate, dueDate, priority, tags, recurrence)
+                            Accessible.name: "Task actions for " + title
+                            function startEdit() {
+                                const task = {
+                                    id: taskRowDelegate.taskId,
+                                    title: taskRowDelegate.title,
+                                    note: taskRowDelegate.note,
+                                    projectId: taskRowDelegate.projectId,
+                                    listId: taskRowDelegate.listId,
+                                    scheduledDate: taskRowDelegate.scheduledDate,
+                                    dueDate: taskRowDelegate.dueDate,
+                                    priority: taskRowDelegate.priority,
+                                    tags: taskRowDelegate.tags,
+                                    recurrence: taskRowDelegate.recurrence
+                                };
+                                window.openTaskEditor(task.id, task.title, task.note, task.projectId,
+                                                      task.listId, task.scheduledDate, task.dueDate,
+                                                      task.priority, task.tags, task.recurrence);
                             }
-                            MenuSeparator {}
-                            MenuItem {
-                                text: "Move up"
-                                visible: taskModel.view === "project" && !archived
-                                enabled: index > 0
-                                onTriggered: taskModel.moveTask(taskId, "up")
-                            }
-                            MenuItem {
-                                text: "Move down"
-                                visible: taskModel.view === "project" && !archived
-                                enabled: index < taskModel.count - 1
-                                onTriggered: taskModel.moveTask(taskId, "down")
-                            }
-                            MenuItem {
-                                text: archived ? "Restore" : "Archive"
-                                enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                                onTriggered: taskModel.archiveTask(taskId, !archived)
-                            }
-                            MenuItem {
-                                text: completed ? "Reopen" : "Complete"
-                                visible: !archived
-                                enabled: taskModel.view !== "project" || !taskModel.projectInfo.archived
-                                onTriggered: completed ? taskModel.reopen(taskId) : taskModel.complete(taskId)
-                            }
+                            onClicked: taskMenuButton.startEdit()
                         }
                     }
                 }

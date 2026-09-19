@@ -83,6 +83,21 @@ private:
         sql(path, "CREATE TABLE task_notifications (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,kind TEXT NOT NULL,date TEXT NOT NULL,notified_at TEXT NOT NULL,PRIMARY KEY(task_id,kind,date))");
         sql(path, "PRAGMA user_version=8");
     }
+    static void seedV9(const QString &path) {
+        seedV8(path);
+        sql(path, "CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL,schema_version INTEGER NOT NULL)");
+        sql(path, "INSERT INTO settings VALUES ('default_project_id','',1),('notifications_enabled','true',1),"
+                  "('notification_days_before','0',1),('dms_show_next_task','true',1),('dms_use_default_project','false',1)");
+        sql(path, "PRAGMA user_version=9");
+    }
+    static void seedV10(const QString &path) {
+        seedV9(path);
+        sql(path, "ALTER TABLE projects ADD COLUMN deleted_at TEXT");
+        sql(path, "ALTER TABLE tasks ADD COLUMN deleted_at TEXT");
+        sql(path, "CREATE INDEX projects_deleted ON projects(deleted_at,archived,sort_order,id)");
+        sql(path, "CREATE INDEX tasks_deleted ON tasks(deleted_at,archived,project_id,completed_at,sort_order,id)");
+        sql(path, "PRAGMA user_version=10");
+    }
     static QVariant sql(const QString &path, const QString &statement) {
         const QString name = QUuid::createUuid().toString();
         QVariant result;
@@ -297,6 +312,24 @@ private slots:
         external.edit(id, "Moved from CLI", "External note", projectId);
         QTRY_COMPARE_WITH_TIMEOUT(model.count(), 1, 3000);
         QCOMPARE(model.data(model.index(0), TaskModel::NoteRole).toString(), "External note");
+        QVERIFY(external.editProject(projectId, "Renamed externally", "#123456"));
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0), TaskModel::ProjectNameRole).toString(),
+                                  QString("Renamed externally"), 3000);
+        const auto listId = external.addList(projectId, "External list").id;
+        const auto tagId = external.addTag("External tag", "#334455").id;
+        QVERIFY(external.edit(id, "Moved from CLI", "External note", projectId, listId,
+                              {}, {}, 0, {tagId}));
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0), TaskModel::ListNameRole).toString(),
+                                  QString("External list"), 3000);
+        QVERIFY(external.renameList(listId, "Renamed list"));
+        QTRY_COMPARE_WITH_TIMEOUT(model.data(model.index(0), TaskModel::ListNameRole).toString(),
+                                  QString("Renamed list"), 3000);
+        QVERIFY(external.editTag(tagId, "Renamed tag", "#556677"));
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            const auto tags = model.data(model.index(0), TaskModel::TagsRole).toList();
+            return tags.size() == 1 && tags.first().toMap().value("name").toString() == "Renamed tag"
+                && tags.first().toMap().value("color").toString() == "#556677";
+        }(), 3000);
         model.setProjectId("missing");
         QCOMPARE(model.projectId(), projectId);
         QVERIFY(!model.error().isEmpty());
@@ -590,6 +623,21 @@ private slots:
         QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='archived'").toInt(), 0);
         QCOMPARE(sql(broken, "SELECT count(*) FROM task_events").toInt(), 2);
     }
+    void addingTagPreservesActiveFilter() {
+        TaskStore store(":memory:");
+        TaskModel model(store);
+        QCOMPARE(model.tagFilter(), QString("*"));
+
+        QVERIFY(model.addTag("Work", "#123456"));
+        QCOMPARE(model.tags().size(), 1);
+        QCOMPARE(model.tagFilter(), QString("*"));
+
+        const QString workId = model.tags().first().toMap().value("id").toString();
+        model.setTagFilter(workId);
+        QCOMPARE(model.tagFilter(), workId);
+        QVERIFY(model.addTag("Home", "#654321"));
+        QCOMPARE(model.tagFilter(), workId);
+    }
     void tagAssignmentFilterSearchEditAndRestart() {
         QTemporaryDir dir;
         const auto path = dir.filePath("tags.sqlite3");
@@ -806,6 +854,117 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
         QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 8);
         QCOMPARE(sql(broken, "SELECT count(*) FROM pragma_table_info('settings') WHERE name='marker'").toInt(), 1);
+    }
+
+    void taskPersistenceTagsSoftDeleteAndNotifications() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("persistence.sqlite3");
+        QString projectId, listId, taskId, workId, urgentId;
+        {
+            TaskStore store(path);
+            projectId = store.addProject("Recoverable").id;
+            listId = store.addList(projectId, "Persisted list").id;
+            workId = store.addTag("Work", "#112233").id;
+            urgentId = store.addTag("Urgent", "#aa2727").id;
+            taskId = store.add("Keep", projectId, listId, "2026-09-19", "2026-09-20", 3,
+                               {workId, urgentId}, "weekly").id;
+            QVERIFY(store.edit(taskId, "Keep edited", "Persistent note", projectId, listId,
+                               "2026-09-19", "2026-09-20", 3, {workId, urgentId}, "weekly"));
+            store.saveSettings({projectId, true, 0, true, false});
+            QVERIFY(store.markNotificationSent({taskId, "Keep edited", "due", "2026-09-20"}));
+
+            QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+                                     store.edit(taskId, "Must roll back", "Changed", projectId, listId,
+                                                "2026-09-19", "2026-09-20", 3,
+                                                {workId, "999"}, "weekly"));
+            QCOMPARE(store.task(taskId).title, "Keep edited");
+            QCOMPARE(store.task(taskId).tags.size(), 2);
+
+            QVERIFY(store.deleteTask(taskId));
+            QVERIFY(!store.task(taskId).deletedAt.isEmpty());
+            QCOMPARE(store.task(taskId).tags.size(), 2);
+            QVERIFY(store.deleteProject(projectId));
+            QVERIFY(store.projects().isEmpty());
+            QVERIFY(store.settings().defaultProjectId.isEmpty());
+            QVERIFY(store.restoreProject(projectId));
+            QCOMPARE(store.settings().defaultProjectId, projectId);
+            // An individually deleted task is not resurrected with its project.
+            QVERIFY(store.tasks("open", projectId).isEmpty());
+            QVERIFY(store.restoreTask(taskId));
+            QVERIFY(store.pendingNotifications("2026-09-20").isEmpty());
+            QVERIFY(store.editTag(workId, "Office", "#334455"));
+        }
+        {
+            TaskStore store(path);
+            const auto task = store.task(taskId);
+            QCOMPARE(task.title, "Keep edited");
+            QCOMPARE(task.note, "Persistent note");
+            QCOMPARE(task.projectId, projectId);
+            QCOMPARE(task.listId, listId);
+            QCOMPARE(task.scheduledDate, "2026-09-19");
+            QCOMPARE(task.dueDate, "2026-09-20");
+            QCOMPARE(task.priority, 3);
+            QCOMPARE(task.recurrence, "weekly");
+            QCOMPARE(task.tags.size(), 2);
+            QCOMPARE(task.tags.first().name, "Office");
+            QCOMPARE(task.tags.first().color, "#334455");
+            QCOMPARE(task.tags.last().name, "Urgent");
+            QCOMPARE(store.settings().defaultProjectId, projectId);
+            QVERIFY(store.pendingNotifications("2026-09-20").isEmpty());
+        }
+    }
+
+    void recurringTaskAndProjectPurgePreserveSuccessors() {
+        TaskStore store(":memory:");
+        const auto firstProject = store.addProject("First");
+        const auto secondProject = store.addProject("Second");
+        const auto tag = store.addTag("Copied", "#123456");
+        const auto source = store.add("Repeat", firstProject.id, {}, {}, "2026-09-19", 0,
+                                      {tag.id}, "daily");
+        QVERIFY(store.complete(source.id));
+        auto successor = store.tasks("open", firstProject.id).first();
+        QCOMPARE(successor.recurrenceSourceId, source.id);
+        QCOMPARE(successor.tags.size(), 1);
+
+        QVERIFY(store.deleteTask(source.id));
+        QVERIFY(store.purgeTask(source.id));
+        successor = store.task(successor.id);
+        QVERIFY(successor.recurrenceSourceId.isEmpty());
+        QCOMPARE(successor.tags.first().id, tag.id);
+
+        const auto projectSource = store.add("Move successor", firstProject.id, {}, {},
+                                             "2026-09-21", 0, {}, "daily");
+        QVERIFY(store.complete(projectSource.id));
+        Task moved;
+        for (const auto &candidate : store.tasks("open", firstProject.id))
+            if (candidate.recurrenceSourceId == projectSource.id) moved = candidate;
+        QVERIFY(!moved.id.isEmpty());
+        QVERIFY(store.edit(moved.id, moved.title, moved.note, secondProject.id, {},
+                           moved.scheduledDate, moved.dueDate, moved.priority, {}, moved.recurrence));
+        QVERIFY(store.deleteProject(firstProject.id));
+        QVERIFY(store.purgeProject(firstProject.id));
+        moved = store.task(moved.id);
+        QCOMPARE(moved.projectId, secondProject.id);
+        QVERIFY(moved.recurrenceSourceId.isEmpty());
+    }
+
+    void upgradesV10DeletionOwnershipAndRollsBack() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("v10.sqlite3");
+        seedV10(path);
+        {
+            TaskStore store(path);
+            QVERIFY(store.task("9").deletedWithProjectId.isEmpty());
+        }
+        QCOMPARE(sql(path, "PRAGMA user_version").toInt(), TaskStore::SchemaVersion);
+        QCOMPARE(sql(path, "SELECT count(*) FROM pragma_table_info('tasks') WHERE name='deleted_with_project_id'").toInt(), 1);
+
+        const auto broken = dir.filePath("broken-v10.sqlite3");
+        seedV10(broken);
+        sql(broken, "ALTER TABLE tasks ADD COLUMN deleted_with_project_id INTEGER");
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, TaskStore{broken});
+        QCOMPARE(sql(broken, "PRAGMA user_version").toInt(), 10);
+        QCOMPARE(sql(broken, "SELECT count(*) FROM sqlite_master WHERE name='tasks_deleted_project'").toInt(), 0);
     }
 
     void dmsThemeModesFallbackAndAtomicReplacement() {

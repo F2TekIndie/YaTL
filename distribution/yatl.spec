@@ -1,5 +1,5 @@
 Name:           yatl
-Version:        0.9.0
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        Local project and todo manager
 License:        MIT
@@ -43,5 +43,9 @@ install -Dpm0644 integrations/niri/README.md %{buildroot}%{_datadir}/yatl/niri/R
 %{_datadir}/yatl/
 
 %changelog
+* Sat Sep 19 2026 YaTL maintainers - 1.0.0-1
+- Add recoverable task and project deletion with persistent undo semantics
+- Improve swipe, date, and color interactions
+
 * Sun Sep 13 2026 YaTL maintainers - 0.9.0-1
 - Add Fedora packaging metadata for the Qt 6 desktop client and CLI.

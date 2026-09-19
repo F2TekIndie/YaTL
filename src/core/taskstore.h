@@ -29,6 +29,8 @@ struct Task {
     QVector<Tag> tags;
     QString recurrence = "none";
     QString recurrenceSourceId;
+    QString deletedAt;
+    QString deletedWithProjectId;
     bool completed() const { return !completedAt.isEmpty(); }
 };
 
@@ -38,6 +40,7 @@ struct Project {
     QString color = "#376548";
     bool archived = false;
     qint64 sortOrder = 0;
+    QString deletedAt;
 };
 
 struct TaskList {
@@ -64,7 +67,7 @@ struct Settings {
 
 class TaskStore {
 public:
-    static constexpr int SchemaVersion = 9;
+    static constexpr int SchemaVersion = 11;
     explicit TaskStore(const QString &path);
     ~TaskStore();
     TaskStore(const TaskStore &) = delete;
@@ -74,6 +77,9 @@ public:
     Project addProject(const QString &name);
     bool editProject(const QString &id, const QString &name, const QString &color);
     bool archiveProject(const QString &id, bool archived);
+    bool deleteProject(const QString &id);
+    bool restoreProject(const QString &id);
+    bool purgeProject(const QString &id);
     bool moveProject(const QString &id, const QString &direction);
     QVector<Project> projects(bool includeArchived = false) const;
     TaskList addList(const QString &projectId, const QString &name);
@@ -95,6 +101,9 @@ public:
     bool complete(const QString &id);
     bool reopen(const QString &id);
     bool archiveTask(const QString &id, bool archived);
+    bool deleteTask(const QString &id);
+    bool restoreTask(const QString &id);
+    bool purgeTask(const QString &id);
     QVector<Task> tasks(const QString &filter = QStringLiteral("open"),
                         const QString &projectId = QStringLiteral("*"),
                         const QString &listId = QStringLiteral("*"),

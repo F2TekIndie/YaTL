@@ -20,7 +20,7 @@
 int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("yatl");
-    app.setApplicationVersion("0.9.0");
+    app.setApplicationVersion("1.0.0");
     app.setOrganizationName("YaTL");
     app.setDesktopFileName("org.yatl.YaTL");
     QCommandLineParser parser;

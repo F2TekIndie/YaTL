@@ -80,8 +80,15 @@ Item {
                 });
                 const id = list.itemAtIndex(0).taskId;
                 const draft = list.itemAtIndex(0);
-                mouseClick(findChild(draft, "menu_" + id));
+                mouseClick(findChild(draft, "taskContent_" + id));
                 const editor = findChild(appWindow, "taskEditor");
+                wait(50);
+                verify(!editor.opened);
+                mouseClick(findChild(draft, "menu_" + id));
+                const initialTaskMenu = findChild(draft, "taskMenu");
+                tryCompare(initialTaskMenu, "opened", true);
+                findChild(draft, "editTaskMenuItem").click();
+                tryCompare(initialTaskMenu, "opened", false);
                 tryCompare(editor, "opened", true);
                 waitForRendering(editor.contentItem);
                 grabImage(appWindow.contentItem).save("ui-editor.png");
@@ -98,6 +105,17 @@ Item {
                 });
                 compare(list.itemAtIndex(0).note, "Review and ship");
                 grabImage(appWindow.contentItem).save("ui-project.png");
+
+                const editedDraft = list.itemAtIndex(0);
+                mouseClick(findChild(editedDraft, "menu_" + id));
+                const taskMenu = findChild(editedDraft, "taskMenu");
+                tryCompare(taskMenu, "opened", true);
+                findChild(editedDraft, "editTaskMenuItem").click();
+                tryCompare(taskMenu, "opened", false);
+                tryCompare(editor, "opened", true);
+                compare(findChild(appWindow, "editTitle").text, "Publish");
+                editor.close();
+                tryCompare(editor, "visible", false);
 
                 mouseClick(findChild(list.itemAtIndex(0), "complete_" + id));
                 tryCompare(taskModel, "count", 0);
@@ -256,7 +274,12 @@ Item {
                 compare(taskModel.projectInfo.name, "Managed project");
                 compare(taskModel.projectInfo.color, "#663399");
 
-                mouseClick(findChild(appWindow, "newListButton"));
+                const newListButton = findChild(appWindow, "newListButton");
+                tryVerify(function () { return newListButton.visible && newListButton.enabled; });
+                // Quick Test may map this button through the stale coordinates
+                // of the modal popup that just closed; invoke the button's
+                // public click signal while still testing its enabled state.
+                newListButton.clicked();
                 const listDialog = findChild(appWindow, "listDialog");
                 tryCompare(listDialog, "opened", true);
                 findChild(appWindow, "listName").text = "Review";
@@ -306,6 +329,34 @@ Item {
                 verify(taskModel.archiveProject(false));
                 tryCompare(taskModel.projectInfo, "archived", false);
                 verify(add.enabled);
+            }
+
+            function test_softDeleteUndoFromTaskMenu() {
+                appWindow.requestActivate();
+                tryCompare(appWindow, "active", true);
+                taskModel.view = "project";
+                taskModel.projectId = "";
+                taskModel.filter = "open";
+                taskModel.tagFilter = "*";
+                const previousCount = taskModel.count;
+                findChild(appWindow, "titleInput").text = "Undo menu deletion";
+                mouseClick(findChild(appWindow, "addButton"));
+                const tasks = findChild(appWindow, "taskList");
+                tryCompare(taskModel, "count", previousCount + 1);
+                tryVerify(function () { return tasks.itemAtIndex(0) !== null; });
+                const row = tasks.itemAtIndex(0);
+                const id = row.taskId;
+                mouseClick(findChild(row, "menu_" + id));
+                const menu = findChild(row, "taskMenu");
+                tryCompare(menu, "opened", true);
+                findChild(row, "deleteTaskMenuItem").triggered();
+                tryCompare(taskModel, "count", previousCount);
+                const undoCard = findChild(appWindow, "undoDeleteCard");
+                tryCompare(undoCard, "visible", true);
+                mouseClick(findChild(appWindow, "undoDeleteButton"));
+                tryCompare(taskModel, "count", previousCount + 1);
+                compare(tasks.itemAtIndex(0).taskId, id);
+                tryCompare(undoCard, "visible", false);
             }
 
             function test_taskArchiveAndOrganizationOrdering() {
@@ -387,9 +438,10 @@ Item {
                 findChild(appWindow, "tagColor").selectedColor = "#A1B2C3";
                 mouseClick(findChild(appWindow, "saveTagButton"));
                 tryCompare(dialog, "visible", false);
-                const workId = taskModel.tagFilter;
                 compare(taskModel.tags.length, 1);
+                const workId = taskModel.tags[0].id;
                 compare(taskModel.tags[0].color, "#a1b2c3");
+                compare(taskModel.tagFilter, "*");
 
                 dialog.showTag("");
                 tryCompare(dialog, "opened", true);
@@ -397,8 +449,9 @@ Item {
                 findChild(appWindow, "tagColor").selectedColor = "#AA2727";
                 mouseClick(findChild(appWindow, "saveTagButton"));
                 tryCompare(dialog, "visible", false);
-                const urgentId = taskModel.tagFilter;
                 compare(taskModel.tags.length, 2);
+                const urgentId = taskModel.tags.filter(tag => tag.name === "Urgent")[0].id;
+                compare(taskModel.tagFilter, "*");
 
                 taskModel.tagFilter = "*";
                 tryCompare(taskModel, "tagFilter", "*");
@@ -434,9 +487,22 @@ Item {
                 compare(tasks.itemAtIndex(0).scheduledDate, "");
                 compare(tasks.itemAtIndex(0).dueDate, "");
 
-                taskModel.tagFilter = workId;
+                const tagFilters = findChild(appWindow, "taskTagFilters");
+                verify(tagFilters.visible);
+                const workFilter = findChild(tagFilters, "taskTagFilter_" + workId);
+                const urgentFilter = findChild(tagFilters, "taskTagFilter_" + urgentId);
+                verify(workFilter !== null);
+                verify(urgentFilter !== null);
+                mouseClick(workFilter);
                 tryCompare(taskModel, "tagFilter", workId);
                 tryCompare(taskModel, "count", 1);
+                mouseClick(workFilter);
+                tryCompare(taskModel, "tagFilter", "*");
+                tryCompare(taskModel, "count", 1);
+                mouseClick(urgentFilter);
+                tryCompare(taskModel, "tagFilter", urgentId);
+                tryCompare(taskModel, "count", 1);
+                taskModel.tagFilter = workId;
                 dialog.showTag(workId);
                 tryCompare(dialog, "opened", true);
                 findChild(appWindow, "tagName").text = "Focus";
@@ -471,6 +537,10 @@ Item {
                 mouseClick(findChild(appWindow, "applicationSettingsButton"));
                 const dialog = findChild(appWindow, "applicationSettings");
                 tryCompare(dialog, "opened", true);
+                verify(dialog.background.radius >= App.AppTheme.cardRadius);
+                verify(dialog.background.antialiasing);
+                waitForRendering(dialog.contentItem);
+                grabImage(appWindow.contentItem).save("ui-settings.png");
                 verify(findChild(appWindow, "defaultProjectSetting") === null);
                 mouseClick(findChild(appWindow, "notificationsEnabledSetting"));
                 findChild(appWindow, "notificationDaysSetting").value = 3;

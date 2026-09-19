@@ -130,7 +130,7 @@ QJsonObject activateOrLaunch(const QString &databasePath, QString view, bool qui
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     app.setApplicationName("yatlctl");
-    app.setApplicationVersion("0.9.0");
+    app.setApplicationVersion("1.0.0");
     QCommandLineParser parser;
     parser.setApplicationDescription("YaTL local task commands. Successful commands return JSON on stdout; errors return JSON on stderr.");
     parser.addHelpOption();
@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
     parser.addOption({"dms-next", "Show the next task in the DMS bar: on or off.", "state"});
     parser.addOption({"dms-capture", "DMS quick add destination: inbox or default.", "destination"});
     parser.addOption({"output", "Write export JSON to a file instead of stdout.", "path"});
-    parser.addPositionalArgument("command", "add TITLE | list | today | upcoming | search QUERY | complete ID | reopen ID | archive ID | restore ID | summary | notify | export [PATH] | open [project|today|upcoming|search] | focus | capture | project-add NAME | projects | edit ID TITLE --project ID|inbox --note NOTE | project-edit ID NAME --color COLOR | project-archive ID | project-restore ID | project-move ID up|down | list-add PROJECT_ID NAME | lists PROJECT_ID | list-rename ID NAME | list-move ID up|down | move ID up|down | tag-add NAME --color COLOR | tag-edit ID NAME --color COLOR | tags");
+    parser.addPositionalArgument("command", "add TITLE | list | today | upcoming | search QUERY | complete ID | reopen ID | archive ID | restore ID | delete ID | undelete ID | purge ID | summary | notify | export [PATH] | open [project|today|upcoming|search] | focus | capture | project-add NAME | projects | edit ID TITLE --project ID|inbox --note NOTE | project-edit ID NAME --color COLOR | project-archive ID | project-restore ID | project-delete ID | project-undelete ID | project-purge ID | project-move ID up|down | list-add PROJECT_ID NAME | lists PROJECT_ID | list-rename ID NAME | list-move ID up|down | move ID up|down | tag-add NAME --color COLOR | tag-edit ID NAME --color COLOR | tags");
     parser.addPositionalArgument("argument", "Title or task ID; use -- before titles starting with a dash.", "[argument]");
     if (!parser.parse(app.arguments())) {
         output({{"error", parser.errorText()}}, stderr);
@@ -165,9 +165,9 @@ int main(int argc, char *argv[]) {
     if (parser.isSet("version")) parser.showVersion();
     const auto args = parser.positionalArguments();
     const QString command = args.value(0);
-    const QMap<QString,int> arity{{"add",2},{"complete",2},{"reopen",2},{"archive",2},{"restore",2},{"project-add",2},
+    const QMap<QString,int> arity{{"add",2},{"complete",2},{"reopen",2},{"archive",2},{"restore",2},{"delete",2},{"undelete",2},{"purge",2},{"project-add",2},
         {"list",1},{"today",1},{"upcoming",1},{"search",2},{"summary",1},{"projects",1},{"edit",3},{"project-edit",3},{"project-archive",2},
-        {"project-restore",2},{"project-move",3},{"list-add",3},{"lists",2},{"list-rename",3},{"list-move",3},{"move",3},
+        {"project-restore",2},{"project-delete",2},{"project-undelete",2},{"project-purge",2},{"project-move",3},{"list-add",3},{"lists",2},{"list-rename",3},{"list-move",3},{"move",3},
         {"tag-add",2},{"tag-edit",3},{"tags",1},{"focus",1},{"capture",1},{"notify",1},{"export",1},
         {"settings",1},{"settings-set",1}};
     const QMap<QString,QSet<QString>> allowed{{"add",{"project","list","scheduled","due","priority","tags","recurrence","use-default"}},
@@ -252,6 +252,9 @@ int main(int argc, char *argv[]) {
         else if (command == "reopen") output({{"id", args[1]}, {"changed", store.reopen(args[1])}});
         else if (command == "archive" || command == "restore")
             output({{"id", args[1]}, {"changed", store.archiveTask(args[1], command == "archive")}});
+        else if (command == "delete" || command == "undelete")
+            output({{"id", args[1]}, {"changed", command == "delete" ? store.deleteTask(args[1]) : store.restoreTask(args[1])}});
+        else if (command == "purge") output({{"id", args[1]}, {"changed", store.purgeTask(args[1])}});
         else if (command == "edit") {
             const auto existing = store.task(args[1]);
             QStringList existingTags;
@@ -263,6 +266,8 @@ int main(int argc, char *argv[]) {
         }
         else if (command == "project-edit") output({{"changed", store.editProject(args[1],args[2],parser.value("color"))}});
         else if (command == "project-archive" || command == "project-restore") output({{"changed", store.archiveProject(args[1], command == "project-archive")}});
+        else if (command == "project-delete" || command == "project-undelete") output({{"changed", command == "project-delete" ? store.deleteProject(args[1]) : store.restoreProject(args[1])}});
+        else if (command == "project-purge") output({{"changed", store.purgeProject(args[1])}});
         else if (command == "project-move") output({{"changed", store.moveProject(args[1],args[2])}});
         else if (command == "list-add") {
             const auto list = store.addList(args[1],args[2]);

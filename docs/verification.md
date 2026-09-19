@@ -105,6 +105,18 @@ and settings migration rollback. DMS QML formatting and the staged build passed;
 the full desktop/QML verification command was blocked by the environment's
 restricted display/socket access.
 
+Iteration 10 automated verification (1.0.0): all **34 core/domain tests, 16 CLI
+integration tests, 4 desktop-process/contract tests, and 18 QML checks** pass.
+The QML suite passed three consecutive complete runs. Coverage includes schema-10
+to schema-11 migration and rollback, restart persistence for every editable task
+field and tag, tag-assignment rollback, external project/list/tag metadata refresh,
+notification-history retention across delete/restore, project-scoped restoration,
+recurrence-safe task and project purge, task-menu Undo and editing, inert task-card
+content, rounded dialogs, toggleable tag-filter chips, tag-filter stability during
+tag creation, and left-reveal/right-close swipe behavior. DMS QML formatting
+and `niri validate` also pass. Desktop IPC was run outside the filesystem sandbox
+because the sandbox rejects the required local Unix socket.
+
 Visual foundation verification (plan steps 1–3): the rebuilt core suite has **30
 passing tests**, including DMS light/dark selection, malformed and absent cache
 fallbacks, and atomic replacement. The component-gallery Qt Quick Test has **5

@@ -1,6 +1,33 @@
 #include "taskmodel.h"
 #include <exception>
 
+namespace {
+bool sameTags(const QVector<Tag> &left, const QVector<Tag> &right) {
+    if (left.size() != right.size()) return false;
+    for (int i = 0; i < left.size(); ++i) {
+        if (left.at(i).id != right.at(i).id || left.at(i).name != right.at(i).name
+            || left.at(i).color != right.at(i).color)
+            return false;
+    }
+    return true;
+}
+
+bool sameTask(const Task &left, const Task &right) {
+    return left.id == right.id && left.title == right.title
+        && left.createdAt == right.createdAt && left.completedAt == right.completedAt
+        && left.projectId == right.projectId && left.note == right.note
+        && left.listId == right.listId && left.sortOrder == right.sortOrder
+        && left.scheduledDate == right.scheduledDate && left.dueDate == right.dueDate
+        && left.priority == right.priority && left.projectName == right.projectName
+        && left.listName == right.listName && left.archived == right.archived
+        && left.recurrence == right.recurrence
+        && left.recurrenceSourceId == right.recurrenceSourceId
+        && left.deletedAt == right.deletedAt
+        && left.deletedWithProjectId == right.deletedWithProjectId
+        && sameTags(left.tags, right.tags);
+}
+}
+
 TaskModel::TaskModel(TaskStore &store, QObject *parent) : QAbstractListModel(parent), store_(store) {
     projectId_ = store_.settings().defaultProjectId;
     refresh();
@@ -108,18 +135,10 @@ void TaskModel::refreshTaskRows() {
     try {
         const auto next = store_.tasks("all", "*", "*", "search", searchText_);
         bool same = next.size() == tasks_.size();
-        if (same) {
-            for (int i = 0; i < next.size() && same; ++i) {
-                const auto &a = next.at(i); const auto &b = tasks_.at(i);
-                same = a.id == b.id && a.title == b.title && a.note == b.note &&
-                       a.completedAt == b.completedAt && a.projectId == b.projectId &&
-                       a.listId == b.listId && a.archived == b.archived && a.tags.size() == b.tags.size();
-                for (int j = 0; same && j < a.tags.size(); ++j) same = a.tags.at(j).id == b.tags.at(j).id;
-            }
-        }
+        for (int i = 0; i < next.size() && same; ++i)
+            same = sameTask(next.at(i), tasks_.at(i));
         if (same) return;
         beginResetModel(); tasks_ = next; endResetModel();
-        dataVersion_ = store_.dataVersion();
         emit countChanged();
     } catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); }
 }
@@ -178,20 +197,8 @@ void TaskModel::refresh() {
         auto tasks = store_.tasks(effectiveFilter, projectId_, listFilter_, view_, searchText_,
                                   view_ == "project" ? tagFilter_ : "*");
         bool rowsChanged = tasks.size() != tasks_.size();
-        for (int i = 0; !rowsChanged && i < tasks.size(); ++i) {
-            const auto &a = tasks.at(i);
-            const auto &b = tasks_.at(i);
-            rowsChanged = a.id != b.id || a.title != b.title || a.completedAt != b.completedAt
-                || a.projectId != b.projectId || a.note != b.note || a.listId != b.listId
-                || a.sortOrder != b.sortOrder || a.scheduledDate != b.scheduledDate
-                || a.dueDate != b.dueDate || a.priority != b.priority || a.archived != b.archived
-                || a.recurrence != b.recurrence || a.recurrenceSourceId != b.recurrenceSourceId
-                || a.tags.size() != b.tags.size();
-            for (int j = 0; !rowsChanged && j < a.tags.size(); ++j)
-                rowsChanged = a.tags.at(j).id != b.tags.at(j).id
-                    || a.tags.at(j).name != b.tags.at(j).name
-                    || a.tags.at(j).color != b.tags.at(j).color;
-        }
+        for (int i = 0; !rowsChanged && i < tasks.size(); ++i)
+            rowsChanged = !sameTask(tasks.at(i), tasks_.at(i));
         if (rowsChanged) {
             beginResetModel();
             tasks_ = std::move(tasks);
@@ -260,11 +267,7 @@ bool TaskModel::edit(const QString &id, const QString &title, const QString &not
 }
 
 bool TaskModel::addTag(const QString &name, const QString &color) {
-    try {
-        const auto previous = tagFilter_;
-        tagFilter_ = store_.addTag(name, color).id;
-        if (tagFilter_ != previous) emit tagFilterChanged();
-    }
+    try { store_.addTag(name, color); }
     catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
     refresh();
     return true;
@@ -285,6 +288,27 @@ bool TaskModel::reopen(const QString &id) {
 
 bool TaskModel::archiveTask(const QString &id, bool archived) {
     try { store_.archiveTask(id, archived); }
+    catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    refresh();
+    return true;
+}
+
+bool TaskModel::deleteTask(const QString &id) {
+    try { if (!store_.deleteTask(id)) return false; }
+    catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    refresh();
+    return true;
+}
+
+bool TaskModel::restoreTask(const QString &id) {
+    try { if (!store_.restoreTask(id)) return false; }
+    catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    refresh();
+    return true;
+}
+
+bool TaskModel::purgeTask(const QString &id) {
+    try { if (!store_.purgeTask(id)) return false; }
     catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
     refresh();
     return true;
@@ -323,6 +347,35 @@ bool TaskModel::editProject(const QString &name, const QString &color) {
 
 bool TaskModel::archiveProject(bool archived) {
     try { store_.archiveProject(projectId_, archived); }
+    catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    refresh();
+    return true;
+}
+
+bool TaskModel::deleteProject(const QString &id) {
+    const QString target = id.isEmpty() ? projectId_ : id;
+    if (target.isEmpty()) { setError("Inbox cannot be deleted."); return false; }
+    try { if (!store_.deleteProject(target)) return false; }
+    catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    if (projectId_ == target) {
+        projectId_.clear();
+        listFilter_ = "*";
+        emit projectIdChanged();
+        emit listFilterChanged();
+    }
+    refresh();
+    return true;
+}
+
+bool TaskModel::restoreProject(const QString &id) {
+    try { if (!store_.restoreProject(id)) return false; }
+    catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
+    refresh();
+    return true;
+}
+
+bool TaskModel::purgeProject(const QString &id) {
+    try { if (!store_.purgeProject(id)) return false; }
     catch (const std::exception &e) { setError(QString::fromUtf8(e.what())); return false; }
     refresh();
     return true;

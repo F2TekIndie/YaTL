@@ -87,11 +87,24 @@ Item {
         anchors.top: parent.top
         anchors.topMargin: 480
     }
+    App.AppSwipeActionRow {
+        objectName: "gallerySwipeRow"
+        interactive: true
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.topMargin: 540
+        width: 300
+        height: 48
+        Rectangle {
+            anchors.fill: parent
+            color: App.AppTheme.surfaceContainerHigh
+        }
+    }
     TestCase {
         name: "ComponentGallery"
         when: windowShown
         function test_components_exist_and_theme_is_live() {
-            for (const name of ["galleryCard", "galleryButton", "galleryIconButton", "galleryTextField", "galleryComboBox", "gallerySwitch", "gallerySegments", "galleryBadge", "galleryNav", "galleryDate"])
+            for (const name of ["galleryCard", "galleryButton", "galleryIconButton", "galleryTextField", "galleryComboBox", "gallerySwitch", "gallerySegments", "galleryBadge", "galleryNav", "galleryDate", "gallerySwipeRow"])
                 verify(findChild(parent, name) !== null, name);
             verify(findChild(parent, "galleryDoneSegment") !== null);
             verify(App.AppTheme.primary.length > 0);
@@ -121,6 +134,13 @@ Item {
             const date = findChild(parent, "galleryDate");
             date.text = "2026-09-13";
             compare(date.text, "2026-09-13");
+
+            const swipe = findChild(parent, "gallerySwipeRow");
+            swipe.reveal = 0;
+            mouseDrag(swipe, swipe.width - 20, swipe.height / 2, -120, 0);
+            tryCompare(swipe, "reveal", 1);
+            mouseDrag(swipe, 20, swipe.height / 2, 120, 0);
+            tryCompare(swipe, "reveal", 0);
         }
         function test_gallery_reference_sizes() {
             const sizes = [[640, 500], [880, 620], [1280, 800]];

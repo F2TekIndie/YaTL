@@ -326,6 +326,34 @@ class CliTest(unittest.TestCase):
         self.run_cli("settings-set", "--notifications", "maybe", code=1)
         self.run_cli("settings-set", code=2)
 
+    def test_soft_delete_restore_and_recurrence_purge(self):
+        project = self.run_cli("project-add", "Recoverable")["project"]
+        tag = self.run_cli("tag-add", "Persisted", "--color", "#123456")["tag"]
+        task = self.run_cli("add", "Keep tags", "--project", project["id"],
+                            "--tags", tag["id"])["task"]
+        self.assertTrue(self.run_cli("delete", task["id"])["changed"])
+        self.assertEqual(self.run_cli("list", "--project", project["id"],
+                                      "--filter", "all")["tasks"], [])
+        self.assertTrue(self.run_cli("undelete", task["id"])["changed"])
+        restored = self.run_cli("list", "--project", project["id"])["tasks"][0]
+        self.assertEqual(restored["tags"][0]["id"], tag["id"])
+
+        self.assertTrue(self.run_cli("project-delete", project["id"])["changed"])
+        self.assertEqual(self.run_cli("projects")["projects"], [])
+        self.assertTrue(self.run_cli("project-undelete", project["id"])["changed"])
+        self.assertEqual(self.run_cli("list", "--project", project["id"])["tasks"][0]["id"],
+                         task["id"])
+
+        recurring = self.run_cli("add", "Recurring purge", "--due", "2026-09-19",
+                                 "--recurrence", "daily")["task"]
+        self.assertTrue(self.run_cli("complete", recurring["id"])["changed"])
+        self.assertTrue(self.run_cli("delete", recurring["id"])["changed"])
+        self.assertTrue(self.run_cli("purge", recurring["id"])["changed"])
+        successor = next(item for item in self.run_cli("list")["tasks"]
+                         if item["title"] == "Recurring purge")
+        self.assertIsNone(successor["recurrence_source_id"])
+        self.run_cli("undelete", recurring["id"], code=1)
+
     def test_export_round_trip_payload(self):
         project = self.run_cli("project-add", "Export project")["project"]
         task_list = self.run_cli("list-add", project["id"], "Milestones")["list"]
@@ -334,7 +362,7 @@ class CliTest(unittest.TestCase):
                             "--list", task_list["id"], "--tags", tag["id"])["task"]
         exported = self.run_cli("export")
         self.assertEqual(exported["format"], "yatl-export-v1")
-        self.assertEqual(exported["schema_version"], 9)
+        self.assertEqual(exported["schema_version"], 11)
         self.assertEqual(exported["projects"][0]["id"], project["id"])
         self.assertEqual(exported["lists"][0]["id"], task_list["id"])
         self.assertEqual(exported["tasks"][0]["id"], task["id"])

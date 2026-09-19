@@ -246,16 +246,31 @@ void TaskStore::migrate() {
                   "('dms_use_default_project','false',1)");
         exec(db_, "PRAGMA user_version=9");
     }
+    if (current < 10) {
+        exec(db_, "ALTER TABLE projects ADD COLUMN deleted_at TEXT");
+        exec(db_, "ALTER TABLE tasks ADD COLUMN deleted_at TEXT");
+        exec(db_, "CREATE INDEX projects_deleted ON projects(deleted_at,archived,sort_order,id)");
+        exec(db_, "CREATE INDEX tasks_deleted ON tasks(deleted_at,archived,project_id,completed_at,sort_order,id)");
+        exec(db_, "PRAGMA user_version=10");
+    }
+    if (current < 11) {
+        // Keep project-cascaded soft deletion distinct from tasks that the user
+        // deleted individually, so restoring a project cannot resurrect them.
+        exec(db_, "ALTER TABLE tasks ADD COLUMN deleted_with_project_id INTEGER REFERENCES projects(id)");
+        exec(db_, "CREATE INDEX tasks_deleted_project ON tasks(deleted_with_project_id,id)");
+        exec(db_, "PRAGMA user_version=11");
+    }
     transaction.commit();
 }
 
 void TaskStore::validateProject(const QString &id, bool writable) const {
     if (id.isEmpty()) return; // NULL project means Inbox.
     QSqlQuery query(db_);
-    query.prepare("SELECT archived FROM projects WHERE id=?");
+    query.prepare("SELECT archived,deleted_at FROM projects WHERE id=?");
     query.addBindValue(positiveId(id));
     run(query);
     if (!query.next()) fail("Project not found.");
+    if (!query.value(1).isNull()) fail("Project was deleted.");
     if (writable && query.value(0).toBool()) fail("Restore the archived project before changing its tasks or lists.");
 }
 
@@ -279,20 +294,20 @@ Project TaskStore::addProject(const QString &name) {
     run(query);
     if (!query.next()) fail("Cannot read the new project.");
     Project project{query.value(0).toString(), query.value(1).toString(), query.value(2).toString(),
-                    query.value(3).toBool(), query.value(4).toLongLong()};
+                    query.value(3).toBool(), query.value(4).toLongLong(), {}};
     transaction.commit();
     return project;
 }
 
 QVector<Project> TaskStore::projects(bool includeArchived) const {
     QSqlQuery query(db_);
-    if (!query.exec(QString("SELECT id,name,color,archived,sort_order FROM projects ")
-                    + (includeArchived ? "" : "WHERE archived=0 ") + "ORDER BY sort_order,id"))
+    if (!query.exec(QString("SELECT id,name,color,archived,sort_order,deleted_at FROM projects WHERE deleted_at IS NULL ")
+                    + (includeArchived ? "" : "AND archived=0 ") + "ORDER BY sort_order,id"))
         fail(query.lastError().text());
     QVector<Project> result;
     while (query.next()) result.append({query.value(0).toString(), query.value(1).toString(),
                                        query.value(2).toString(), query.value(3).toBool(),
-                                       query.value(4).toLongLong()});
+                                       query.value(4).toLongLong(), query.value(5).toString()});
     return result;
 }
 
@@ -360,11 +375,12 @@ bool TaskStore::edit(const QString &id, const QString &title, const QString &not
     validateProject(projectId, true);
     validateList(listId, projectId);
     QSqlQuery query(db_);
-    query.prepare("SELECT title,note,project_id,list_id,scheduled_date,due_date,priority,archived,recurrence FROM tasks WHERE id=?");
+    query.prepare("SELECT title,note,project_id,list_id,scheduled_date,due_date,priority,archived,recurrence,deleted_at FROM tasks WHERE id=?");
     query.addBindValue(number);
     run(query);
     if (!query.next()) fail("Task not found.");
     if (query.value(7).toBool()) fail("Restore the archived task before changing it.");
+    if (!query.value(9).isNull()) fail("Task was deleted.");
     QStringList previousTags;
     for (const auto &tag : taskTags(id)) previousTags.append(tag.id);
     previousTags.sort();
@@ -409,12 +425,13 @@ bool TaskStore::setCompleted(const QString &id, bool completed) {
     const auto number = positiveId(id);
     Transaction transaction(db_);
     QSqlQuery query(db_);
-    query.prepare("SELECT completed_at,project_id,archived,title,note,list_id,scheduled_date,due_date,priority,recurrence "
+    query.prepare("SELECT completed_at,project_id,archived,title,note,list_id,scheduled_date,due_date,priority,recurrence,deleted_at "
                   "FROM tasks WHERE id=?");
     query.addBindValue(number);
     run(query);
     if (!query.next()) fail("Task not found.");
     if (query.value(2).toBool()) fail("Restore the archived task before changing it.");
+    if (!query.value(10).isNull()) fail("Task was deleted.");
     validateProject(query.value(1).toString(), true);
     const bool wasCompleted = !query.value(0).isNull();
     const QString projectId = query.value(1).toString();
@@ -470,10 +487,11 @@ bool TaskStore::archiveTask(const QString &id, bool archived) {
     const auto number = positiveId(id);
     Transaction transaction(db_);
     QSqlQuery query(db_);
-    query.prepare("SELECT project_id,archived FROM tasks WHERE id=?");
+    query.prepare("SELECT project_id,archived,deleted_at FROM tasks WHERE id=?");
     query.addBindValue(number);
     run(query);
     if (!query.next()) fail("Task not found.");
+    if (!query.value(2).isNull()) fail("Task was deleted.");
     validateProject(query.value(0).toString(), true);
     const bool wasArchived = query.value(1).toBool();
     query.finish();
@@ -488,6 +506,71 @@ bool TaskStore::archiveTask(const QString &id, bool archived) {
     return true;
 }
 
+bool TaskStore::deleteTask(const QString &id) {
+    const auto number = positiveId(id);
+    Transaction transaction(db_);
+    QSqlQuery query(db_);
+    query.prepare("SELECT deleted_at FROM tasks WHERE id=?");
+    query.addBindValue(number);
+    run(query);
+    if (!query.next()) fail("Task not found.");
+    if (!query.value(0).isNull()) { transaction.commit(); return false; }
+    query.finish();
+    query.prepare("UPDATE tasks SET deleted_at=?,deleted_with_project_id=NULL WHERE id=? AND deleted_at IS NULL");
+    query.addBindValue(now());
+    query.addBindValue(number);
+    run(query);
+    transaction.commit();
+    return true;
+}
+
+bool TaskStore::restoreTask(const QString &id) {
+    const auto number = positiveId(id);
+    Transaction transaction(db_);
+    QSqlQuery query(db_);
+    query.prepare("SELECT project_id,deleted_at FROM tasks WHERE id=?");
+    query.addBindValue(number);
+    run(query);
+    if (!query.next()) fail("Task not found.");
+    const QString projectId = query.value(0).toString();
+    if (query.value(1).isNull()) { transaction.commit(); return false; }
+    if (!projectId.isEmpty()) validateProject(projectId);
+    query.finish();
+    query.prepare("UPDATE tasks SET deleted_at=NULL,deleted_with_project_id=NULL WHERE id=?");
+    query.addBindValue(number);
+    run(query);
+    transaction.commit();
+    return true;
+}
+
+bool TaskStore::purgeTask(const QString &id) {
+    const auto number = positiveId(id);
+    Transaction transaction(db_);
+    QSqlQuery query(db_);
+    query.prepare("SELECT id FROM tasks WHERE id=? AND deleted_at IS NOT NULL");
+    query.addBindValue(number);
+    run(query);
+    if (!query.next()) fail("Deleted task not found.");
+    query.finish();
+    // A generated recurrence occurrence remains useful after its deleted
+    // predecessor is purged; detach the lineage before removing the source.
+    query.prepare("UPDATE tasks SET recurrence_source_id=NULL WHERE recurrence_source_id=?");
+    query.addBindValue(number);
+    run(query);
+    query.finish();
+    for (const auto &table : {QStringLiteral("task_events"), QStringLiteral("task_notifications"), QStringLiteral("task_tags")}) {
+        query.prepare(QString("DELETE FROM %1 WHERE task_id=?").arg(table));
+        query.addBindValue(number);
+        run(query);
+        query.finish();
+    }
+    query.prepare("DELETE FROM tasks WHERE id=?");
+    query.addBindValue(number);
+    run(query);
+    transaction.commit();
+    return true;
+}
+
 QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
                                const QString &listId, const QString &scope,
                                const QString &search, const QString &tagId) const {
@@ -496,7 +579,7 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
     QString sql = "SELECT t.id,t.title,t.created_at,t.completed_at,t.project_id,t.note,t.list_id,t.sort_order,"
                   "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived,t.recurrence,t.recurrence_source_id "
                   "FROM tasks t LEFT JOIN projects p ON p.id=t.project_id "
-                  "LEFT JOIN task_lists l ON l.id=t.list_id WHERE 1=1";
+                  "LEFT JOIN task_lists l ON l.id=t.list_id WHERE t.deleted_at IS NULL";
     QVector<QVariant> bindings;
     if (filter == "open") sql += " AND t.completed_at IS NULL AND t.archived=0";
     else if (filter == "completed") sql += " AND t.completed_at IS NOT NULL AND t.archived=0";
@@ -514,7 +597,7 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
             sql += " AND t.project_id=?";
             bindings.append(positiveId(projectId));
         }
-        if (projectId == "*") sql += " AND (t.project_id IS NULL OR p.archived=0)";
+        if (projectId == "*") sql += " AND (t.project_id IS NULL OR (p.archived=0 AND p.deleted_at IS NULL))";
         if (listId.isEmpty()) sql += " AND t.list_id IS NULL";
         else if (listId != "*") {
             validateList(listId, projectId);
@@ -522,7 +605,7 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
             bindings.append(positiveId(listId));
         }
     } else {
-        sql += " AND (t.project_id IS NULL OR p.archived=0)";
+        sql += " AND (t.project_id IS NULL OR (p.archived=0 AND p.deleted_at IS NULL))";
         const QString today = QDate::currentDate().toString(Qt::ISODate);
         if (scope == "today") {
             sql += " AND ((t.due_date IS NOT NULL AND t.due_date<=?) OR "
@@ -566,7 +649,7 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
                   query.value(8).toString(), query.value(9).toString(),
                   query.value(10).toInt(), query.value(11).toString(),
                   query.value(12).toString(), query.value(13).toBool(), {},
-                  query.value(14).toString(), query.value(15).toString()};
+                  query.value(14).toString(), query.value(15).toString(), {}, {}};
         result.append(std::move(task));
     }
     if (!result.isEmpty()) {
@@ -588,7 +671,8 @@ QVector<Task> TaskStore::tasks(const QString &filter, const QString &projectId,
 Task TaskStore::task(const QString &id) const {
     QSqlQuery query(db_);
     query.prepare("SELECT t.id,t.title,t.created_at,t.completed_at,t.project_id,t.note,t.list_id,t.sort_order,"
-                  "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived,t.recurrence,t.recurrence_source_id "
+                  "t.scheduled_date,t.due_date,t.priority,COALESCE(p.name,''),COALESCE(l.name,''),t.archived,t.recurrence,t.recurrence_source_id,"
+                  "t.deleted_at,t.deleted_with_project_id "
                   "FROM tasks t LEFT JOIN projects p ON p.id=t.project_id "
                   "LEFT JOIN task_lists l ON l.id=t.list_id WHERE t.id=?");
     query.addBindValue(positiveId(id));
@@ -599,7 +683,8 @@ Task TaskStore::task(const QString &id) const {
                 query.value(6).toString(), query.value(7).toLongLong(), query.value(8).toString(),
                 query.value(9).toString(), query.value(10).toInt(), query.value(11).toString(),
                 query.value(12).toString(), query.value(13).toBool(), {},
-                query.value(14).toString(), query.value(15).toString()};
+                query.value(14).toString(), query.value(15).toString(),
+                query.value(16).toString(), query.value(17).toString()};
     result.tags = taskTags(result.id);
     return result;
 }
@@ -615,8 +700,8 @@ QVector<TaskNotification> TaskStore::pendingNotifications(const QString &through
     if (throughDate.isEmpty()) fail("Notification date must not be empty.");
     QSqlQuery query(db_);
     query.prepare("SELECT t.id,t.title,t.scheduled_date,t.due_date FROM tasks t "
-                  "LEFT JOIN projects p ON p.id=t.project_id WHERE t.completed_at IS NULL AND t.archived=0 "
-                  "AND (t.project_id IS NULL OR p.archived=0) AND "
+                  "LEFT JOIN projects p ON p.id=t.project_id WHERE t.deleted_at IS NULL AND t.completed_at IS NULL AND t.archived=0 "
+                  "AND (t.project_id IS NULL OR (p.archived=0 AND p.deleted_at IS NULL)) AND "
                   "((t.scheduled_date IS NOT NULL AND t.scheduled_date<=?) OR (t.due_date IS NOT NULL AND t.due_date<=?)) "
                   "ORDER BY t.priority DESC,COALESCE(t.due_date,t.scheduled_date),t.id");
     query.addBindValue(throughDate);
@@ -668,6 +753,13 @@ Settings TaskStore::settings() const {
         else if (key == "notification_days_before") result.notificationDaysBefore = value.toInt();
         else if (key == "dms_show_next_task") result.dmsShowNextTask = value == "true";
         else if (key == "dms_use_default_project") result.dmsUseDefaultProject = value == "true";
+    }
+    if (!result.defaultProjectId.isEmpty()) {
+        query.finish();
+        query.prepare("SELECT 1 FROM projects WHERE id=? AND archived=0 AND deleted_at IS NULL");
+        query.addBindValue(positiveId(result.defaultProjectId));
+        run(query);
+        if (!query.next()) result.defaultProjectId.clear();
     }
     return result;
 }
@@ -732,6 +824,78 @@ bool TaskStore::archiveProject(const QString &id, bool archived) {
     const bool changed = query.numRowsAffected() > 0;
     transaction.commit();
     return changed;
+}
+
+bool TaskStore::deleteProject(const QString &id) {
+    const auto number = positiveId(id);
+    Transaction transaction(db_);
+    validateProject(id);
+    const QString deletedAt = now();
+    QSqlQuery query(db_);
+    query.prepare("UPDATE projects SET deleted_at=? WHERE id=? AND deleted_at IS NULL");
+    query.addBindValue(deletedAt);
+    query.addBindValue(number);
+    run(query);
+    if (query.numRowsAffected() == 0) { transaction.commit(); return false; }
+    query.prepare("UPDATE tasks SET deleted_at=?,deleted_with_project_id=? WHERE project_id=? AND deleted_at IS NULL");
+    query.addBindValue(deletedAt);
+    query.addBindValue(number);
+    query.addBindValue(number);
+    run(query);
+    transaction.commit();
+    return true;
+}
+
+bool TaskStore::restoreProject(const QString &id) {
+    const auto number = positiveId(id);
+    Transaction transaction(db_);
+    QSqlQuery query(db_);
+    query.prepare("SELECT deleted_at FROM projects WHERE id=?");
+    query.addBindValue(number);
+    run(query);
+    if (!query.next()) fail("Project not found.");
+    if (query.value(0).isNull()) { transaction.commit(); return false; }
+    query.finish();
+    query.prepare("UPDATE projects SET deleted_at=NULL WHERE id=?");
+    query.addBindValue(number);
+    run(query);
+    query.prepare("UPDATE tasks SET deleted_at=NULL,deleted_with_project_id=NULL WHERE deleted_with_project_id=?");
+    query.addBindValue(number);
+    run(query);
+    transaction.commit();
+    return true;
+}
+
+bool TaskStore::purgeProject(const QString &id) {
+    const auto number = positiveId(id);
+    Transaction transaction(db_);
+    QSqlQuery query(db_);
+    query.prepare("SELECT id FROM projects WHERE id=? AND deleted_at IS NOT NULL");
+    query.addBindValue(number);
+    run(query);
+    if (!query.next()) fail("Deleted project not found.");
+    query.finish();
+    // Successors may have been moved to another project. Preserve them while
+    // detaching references to occurrences that are about to be purged.
+    query.prepare("UPDATE tasks SET recurrence_source_id=NULL WHERE recurrence_source_id IN "
+                  "(SELECT id FROM tasks WHERE project_id=?)");
+    query.addBindValue(number); run(query);
+    query.prepare("DELETE FROM task_events WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)");
+    query.addBindValue(number); run(query);
+    query.prepare("DELETE FROM task_notifications WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)");
+    query.addBindValue(number); run(query);
+    query.prepare("DELETE FROM task_tags WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)");
+    query.addBindValue(number); run(query);
+    query.prepare("DELETE FROM tasks WHERE project_id=?");
+    query.addBindValue(number); run(query);
+    query.prepare("DELETE FROM task_lists WHERE project_id=?");
+    query.addBindValue(number); run(query);
+    query.prepare("UPDATE settings SET value='' WHERE key='default_project_id' AND value=?");
+    query.addBindValue(QString::number(number)); run(query);
+    query.prepare("DELETE FROM projects WHERE id=?");
+    query.addBindValue(number); run(query);
+    transaction.commit();
+    return true;
 }
 
 bool TaskStore::moveProject(const QString &id, const QString &direction) {
@@ -965,11 +1129,12 @@ bool TaskStore::moveTask(const QString &id, const QString &direction, const QStr
     if (direction != "up" && direction != "down") fail("Direction must be up or down.");
     Transaction transaction(db_);
     QSqlQuery query(db_);
-    query.prepare("SELECT project_id,completed_at,archived FROM tasks WHERE id=?");
+    query.prepare("SELECT project_id,completed_at,archived,deleted_at FROM tasks WHERE id=?");
     query.addBindValue(positiveId(id));
     run(query);
     if (!query.next()) fail("Task not found.");
     if (query.value(2).toBool()) fail("Restore the archived task before changing it.");
+    if (!query.value(3).isNull()) fail("Task was deleted.");
     const auto project = query.value(0).toString();
     const bool completed = !query.value(1).isNull();
     query.finish();

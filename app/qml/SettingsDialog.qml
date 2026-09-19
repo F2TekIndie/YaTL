@@ -6,7 +6,7 @@ AppDialog {
     id: dialog
     property var model
     property string defaultProjectIdChoice: ""
-    title: "Settings"
+    title: ""
     width: 560
     height: 560
     modal: true

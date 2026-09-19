@@ -165,6 +165,24 @@ It does not claim completion of all milestone 2 or desktop integration features.
   disabled without deleting delivery history. Migration and rollback fixtures,
   CLI process tests, core tests, and the QML settings workflow cover the loop.
 
+## Iteration 10 — recoverable deletion and interaction polish (1.0.0)
+
+- Schema 10 adds soft-deletion timestamps for tasks and projects. Schema 11
+  records which tasks were deleted with a project, so restoring a project does
+  not resurrect tasks that were deleted independently.
+- Task and project deletion preserve task content, tags, event history, recurrence
+  successors, and notification-delivery history. Undo restores the latest deleted
+  item; permanent purge detaches surviving recurrence successors before removing
+  the deleted records.
+- The CLI exposes task and project delete, undelete, and purge commands. The QML
+  app exposes task-menu and swipe deletion plus a single, deterministic Undo action.
+- Swipe rows reveal Delete on a left swipe and close it on a right swipe. Color
+  selection and date keyboard interaction receive additional accessibility polish.
+- Task editing is available only from the task action menu. Creating a tag preserves
+  the active filter, while visible task-list tag chips select or clear filtering.
+- Restart, migration, rollback, tag transaction, recurrence purge, CLI process,
+  and QML interaction tests cover the persistence boundary.
+
 ## Visual foundation — consolidated plan steps 1–3
 
 - `DmsThemeProvider` reads the active semantic palette from
